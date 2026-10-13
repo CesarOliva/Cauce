@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 
-/* Maquetas en escala de grises. Todo en metros, y hacia arriba. */
+/* Maquetas en escala de grises. Todo en metros, y hacia arriba.
+   Son representaciones genéricas: no pretenden copiar una máquina real,
+   sino mostrar qué tipo de trabajo hace (almacenar, cortar, armar, pasar por una línea...). */
 
 export const M = {
   white: new THREE.MeshStandardMaterial({ color: 0xf8f8f8, roughness: 0.75 }),
@@ -13,6 +15,8 @@ export const M = {
   glassEdge: new THREE.LineBasicMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0.6 }),
   card: new THREE.MeshStandardMaterial({ color: 0xbdbdbd, roughness: 0.95 }),
 }
+
+const EDGE = new THREE.LineBasicMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0.55 })
 
 let hatchTex = null
 export function hatchTexture() {
@@ -57,15 +61,34 @@ export function cyl(parent, r, h, mat, x = 0, y = 0, z = 0, axis = 'y', seg = 20
   return m
 }
 
-export function sheet(parent, w, h, x, y, z, rx = 0, ry = 0, rz = 0) {
+/* Panel translúcido (solo para las ventanas de la oficina). */
+function pane(parent, w, h, x, y, z, ry = 0) {
   const geo = new THREE.BoxGeometry(w, h, 0.03)
   const m = new THREE.Mesh(geo, M.glass)
   m.position.set(x, y, z)
-  m.rotation.set(rx, ry, rz)
-  const e = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.glassEdge)
-  m.add(e)
+  m.rotation.y = ry
+  m.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.glassEdge))
   parent.add(m)
   return m
+}
+
+/* Caja genérica: pieza, bulto o caja de cualquier industria. */
+export function crate(parent, w, h, d, x = 0, y = 0, z = 0, mat = M.card, ry = 0) {
+  const m = box(parent, w, h, d, mat, x, y, z)
+  m.rotation.y = ry
+  m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), EDGE))
+  return m
+}
+
+/* Tarima con una pila de cajas. */
+function pallet(g, x, z, levels = 2, ry = 0) {
+  const p = new THREE.Group()
+  p.position.set(x, 0, z)
+  p.rotation.y = ry
+  box(p, 1.2, 0.14, 1.0, M.dark, 0, 0, 0)
+  for (let i = 0; i < levels; i++) crate(p, 1.05, 0.4, 0.85, 0, 0.14 + i * 0.4, 0, i % 2 ? M.light : M.card)
+  g.add(p)
+  return p
 }
 
 function zoneFloor(g, w, d) {
@@ -82,50 +105,56 @@ function zoneFloor(g, w, d) {
   g.add(border)
 }
 
-function aframe(g, x, z, len, sheets = 3, w = 1.6) {
-  box(g, 0.08, 1.7, len, M.black, x, 0, z)
-  box(g, 0.9, 0.12, len, M.dark, x, 0, z)
-  for (let i = 0; i < sheets; i++) {
-    const side = i % 2 ? 1 : -1
-    sheet(g, len * 0.86, w, x + side * (0.18 + 0.05 * i), 0.95, z, 0, Math.PI / 2, side * -0.18)
-  }
-}
-
 const builders = {
-  rack(g, w, d) {
-    box(g, w, 0.12, d, M.dark)
-    const n = 4
-    for (let i = 0; i < n; i++) aframe(g, -w / 2 + (w / n) * (i + 0.5), 0, d * 0.82, 4, 2)
+  /* Estantería con cajas: almacén de materia prima o de producto. */
+  storage(g, w, d) {
+    const bays = Math.max(2, Math.round(w / 2.2))
+    const bw = w / bays
+    box(g, w, 0.08, d, M.mid, 0, 0, 0)
+    for (let i = 0; i <= bays; i++) for (const z of [-d / 2 + 0.1, d / 2 - 0.1]) box(g, 0.08, 2.5, 0.08, M.black, -w / 2 + i * bw, 0, z)
+    ;[0.25, 1.05, 1.85].forEach((y, lv) => {
+      box(g, w, 0.06, d - 0.1, M.dark, 0, y, 0)
+      for (let i = 0; i < bays; i++) {
+        if ((i + lv) % 4 === 3) continue
+        crate(g, bw * 0.72, 0.5 - (lv % 2) * 0.12, d * 0.62, -w / 2 + (i + 0.5) * bw, y + 0.06, 0, (i + lv) % 2 ? M.card : M.light)
+      }
+    })
   },
-  table(g, w, d) {
+  /* Mesa grande con pórtico: corte, trazado o mecanizado de piezas planas. */
+  gantry(g, w, d) {
     for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(g, 0.12, 0.85, 0.12, M.black, lx * (w / 2 - 0.2), 0, lz * (d / 2 - 0.2))
     box(g, w, 0.1, d, M.white, 0, 0.85, 0)
-    sheet(g, w * 0.78, d * 0.72, -0.2, 0.98, 0, -Math.PI / 2)
+    crate(g, w * 0.78, 0.05, d * 0.72, -0.2, 0.95, 0, M.light)
     box(g, 0.25, 0.25, d + 0.3, M.black, w * 0.12, 1.1, 0)
     box(g, 0.4, 0.35, 0.4, M.dark, w * 0.12, 1.05, -0.4)
-    box(g, 0.2, 1.3, d + 0.3, M.steel, -w / 2 - 0.1, 0, 0).scale.set(1, 1, 1)
+    for (const z of [-1, 1]) box(g, 0.14, 1.25, 0.14, M.steel, w * 0.12, 0, z * (d / 2 + 0.15))
+    box(g, 0.2, 1.3, d + 0.3, M.steel, -w / 2 - 0.1, 0, 0)
   },
-  bench(g, w, d) {
+  /* Banco de trabajo con piezas: ensamble, acabado manual, revisión. */
+  workbench(g, w, d) {
     for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(g, 0.1, 0.85, 0.1, M.black, lx * (w / 2 - 0.15), 0, lz * (d / 2 - 0.15))
     box(g, w, 0.08, d, M.light, 0, 0.85, 0)
-    for (let i = 0; i < 5; i++) sheet(g, 0.5 + (i % 3) * 0.3, 0.4 + (i % 2) * 0.3, -w / 2 + 0.6 + i * 0.7, 0.96, (i % 2 ? 0.4 : -0.4), -Math.PI / 2, 0, i * 0.5)
+    for (let i = 0; i < 5; i++) crate(g, 0.35 + (i % 3) * 0.15, 0.14 + (i % 2) * 0.1, 0.3 + (i % 2) * 0.15, -w / 2 + 0.6 + i * 0.7, 0.93, i % 2 ? 0.35 : -0.35, i % 2 ? M.card : M.white, i * 0.4)
     box(g, 0.9, 0.5, 0.7, M.mid, w / 2 - 0.6, 0, d / 2 + 0.45)
   },
-  polisher(g, w, d) {
-    const body = w * 0.55
-    box(g, body, 1.05, d * 0.7, M.light, 0, 0, 0)
-    box(g, body * 0.8, 0.45, d * 0.6, M.black, 0, 1.05, 0)
-    for (let i = 0; i < 6; i++) box(g, 0.14, 0.12, 0.14, M.white, -body * 0.35 + i * (body * 0.14), 1.5, -d * 0.18)
+  /* Máquina con cuerpo central y transportadores de entrada y salida. */
+  line(g, w, d) {
+    const body = w * 0.42
+    const len = (w - body) / 2
+    box(g, body, 1.1, d * 0.72, M.light, 0, 0, 0)
+    box(g, body * 0.82, 0.5, d * 0.62, M.black, 0, 1.1, 0)
+    for (let i = 0; i < 5; i++) box(g, 0.14, 0.12, 0.14, M.white, -body * 0.32 + i * (body * 0.16), 1.6, -d * 0.16)
+    box(g, 0.5, 1.5, 0.32, M.dark, body / 2 - 0.4, 0, d * 0.46)
     for (const side of [-1, 1]) {
-      const cx = side * (body / 2 + (w - body) / 4)
-      const len = (w - body) / 2
-      box(g, len, 0.75, d * 0.5, M.dark, cx, 0, 0)
-      for (let i = 0; i < 5; i++) cyl(g, 0.06, d * 0.5, M.steel, cx - len / 2 + 0.2 + i * (len / 5), 0.82, 0, 'z', 10)
+      const cx = side * (body / 2 + len / 2)
+      box(g, len, 0.7, d * 0.45, M.dark, cx, 0, 0)
+      for (let i = 0; i < 6; i++) cyl(g, 0.05, d * 0.45, M.steel, cx - len / 2 + (i + 0.5) * (len / 6), 0.76, 0, 'z', 10)
     }
-    sheet(g, 1.6, d * 0.4, -body / 2 - (w - body) / 4, 0.92, 0, -Math.PI / 2)
-    box(g, 0.5, 1.4, 0.3, M.black, body / 2 - 0.4, 0, d * 0.4)
+    crate(g, 0.55, 0.22, 0.4, -(body / 2 + len / 2), 0.78, 0, M.card)
+    crate(g, 0.55, 0.22, 0.4, body / 2 + len / 2, 0.78, 0, M.light)
   },
-  booth(g, w, d) {
+  /* Cabina cerrada con extractor: pintura, arenado, soldadura, curado. */
+  cabin(g, w, d) {
     box(g, w * 0.66, 2.3, d * 0.9, M.white, -w * 0.15, 0, 0)
     box(g, w * 0.4, 1.0, 0.05, M.black, -w * 0.15, 0.9, d * 0.45 + 0.03)
     box(g, w * 0.66 + 0.1, 0.12, d * 0.9 + 0.1, M.dark, -w * 0.15, 2.3, 0)
@@ -133,38 +162,51 @@ const builders = {
     cyl(g, 0.7, 0.2, M.black, w * 0.32, 2.8, -d * 0.2, 'y', 24)
     box(g, 1.0, 0.3, 0.3, M.dark, w * 0.12, 2.2, -d * 0.2)
   },
-  washer(g, w, d) {
+  /* Túnel de paso con rodillos a los lados: lavado, secado, horno. */
+  tunnel(g, w, d) {
     box(g, w * 0.62, 1.15, d * 0.75, M.white, 0, 0, 0)
     box(g, w * 0.62, 0.08, d * 0.75, M.black, 0, 1.15, 0)
-    for (let i = 0; i < 4; i++) cyl(g, 0.16, d * 0.62, M.dark, -w * 0.22 + i * w * 0.15, 1.3, 0, 'z', 14)
+    for (const side of [-1, 1]) box(g, 0.05, 0.7, d * 0.5, M.black, side * w * 0.31, 0.2, 0)
+    for (let i = 0; i < 3; i++) cyl(g, 0.2, 0.16, M.dark, -w * 0.2 + i * w * 0.2, 1.23, 0, 'y', 16)
     for (const side of [-1, 1]) {
       const cx = side * (w * 0.31 + w * 0.095)
       box(g, w * 0.19, 0.75, d * 0.5, M.dark, cx, 0, 0)
       for (let i = 0; i < 3; i++) cyl(g, 0.05, d * 0.5, M.steel, cx - w * 0.07 + i * w * 0.07, 0.8, 0, 'z', 10)
     }
   },
-  pack(g, w, d) {
+  /* Mesa de empaque con cajas listas. */
+  packing(g, w, d) {
     for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(g, 0.1, 0.85, 0.1, M.black, lx * (w * 0.3 - 0.15), 0, lz * (d * 0.3 - 0.15))
     box(g, w * 0.6, 0.08, d * 0.6, M.white, 0, 0.85, 0)
-    sheet(g, w * 0.4, d * 0.35, 0, 0.98, 0, -Math.PI / 2)
-    for (let i = 0; i < 3; i++) for (let j = 0; j <= i % 2; j++) box(g, 0.8, 0.55, 0.6, M.card, w * 0.36, j * 0.55, -d * 0.3 + i * 0.75)
+    crate(g, w * 0.32, 0.26, d * 0.3, 0, 0.93, 0, M.card)
+    for (let i = 0; i < 3; i++) for (let j = 0; j <= i % 2; j++) crate(g, 0.8, 0.55, 0.6, w * 0.36, j * 0.55, -d * 0.3 + i * 0.75, M.card)
     cyl(g, 0.35, 1.0, M.light, -w * 0.38, 0, d * 0.3, 'y', 18)
   },
-  zone(g, w, d, opts = {}) {
+  /* Zona de recepción: tarimas y un patín. */
+  receiving(g, w, d) {
     zoneFloor(g, w, d)
-    if (opts.id === 'recepcion') {
-      aframe(g, -w * 0.15, 0, d * 0.55, 3, 2.2)
-      box(g, 1.2, 0.15, 1.0, M.dark, w * 0.3, 0, d * 0.2)
-    } else if (opts.sorted) {
-      for (let i = 0; i < 3; i++) aframe(g, -w / 2 + (w / 3) * (i + 0.5), 0, d * 0.6, 2 + (i % 2), 1.5)
+    pallet(g, -w * 0.25, -d * 0.15, 3)
+    pallet(g, w * 0.02, -d * 0.2, 2, 0.1)
+    pallet(g, -w * 0.18, d * 0.2, 2, -0.08)
+    box(g, 0.5, 0.12, 1.4, M.dark, w * 0.3, 0, d * 0.15)
+    box(g, 0.14, 0.9, 0.14, M.black, w * 0.3, 0, d * 0.15 + 0.6)
+  },
+  /* Zona de salida: ordenada por ruta o amontonada. */
+  dispatch(g, w, d, opts = {}) {
+    zoneFloor(g, w, d)
+    if (opts.sorted) {
+      for (let i = 0; i < 3; i++) {
+        pallet(g, -w / 2 + (w / 3) * (i + 0.5), -d * 0.12, 2 + (i % 2))
+        pallet(g, -w / 2 + (w / 3) * (i + 0.5), d * 0.22, 1 + (i % 2))
+        if (i) box(g, 0.08, 0.02, d * 0.9, M.black, -w / 2 + (w / 3) * i, 0.03, 0)
+      }
     } else {
       for (let i = 0; i < 9; i++) {
         const x = -w / 2 + 0.8 + ((i * 1.7) % (w - 1.4))
         const z = -d / 2 + 0.8 + ((i * 1.3) % (d - 1.4))
-        sheet(g, 1.2 + (i % 3) * 0.3, 1.0 + (i % 2) * 0.4, x, 0.6, z, 0.25 * ((i % 3) - 1), i * 0.7, 0.2)
+        crate(g, 0.7 + (i % 3) * 0.25, 0.4 + (i % 2) * 0.3, 0.6 + (i % 2) * 0.2, x, 0, z, i % 2 ? M.card : M.light, i * 0.7)
       }
-      box(g, 0.9, 0.5, 0.7, M.card, w * 0.25, 0, -d * 0.3)
-      box(g, 0.9, 0.5, 0.7, M.card, w * 0.3, 0.5, -d * 0.25)
+      crate(g, 0.9, 0.5, 0.7, w * 0.25, 0.4, -d * 0.3, M.card, 0.3)
     }
   },
   office(g, w, d) {
@@ -175,8 +217,7 @@ const builders = {
     g.add(floor)
     const h = 2.3
     for (const [len, x, z, rot] of [[w, 0, -d / 2, 0], [w, 0, d / 2, 0], [d, -w / 2, 0, Math.PI / 2], [d, w / 2, 0, Math.PI / 2]]) {
-      const pane = sheet(g, len, h, x, h / 2, z, 0, rot, 0)
-      pane.material = M.glass
+      pane(g, len, h, x, h / 2, z, rot)
       box(g, rot ? 0.08 : len, 0.08, rot ? len : 0.08, M.black, x, h, z)
     }
     for (let i = 0; i < 3; i++) {
@@ -203,14 +244,19 @@ const builders = {
   },
 }
 
+/* Los tipos de la planta se pueden escribir con nombres de cualquier industria. */
+const ALIAS = { rack: 'storage', table: 'gantry', bench: 'workbench', polisher: 'line', booth: 'cabin', washer: 'tunnel', pack: 'packing', zone: 'dispatch' }
+
 export function makeMachine(kind, w, d, opts = {}) {
   const g = new THREE.Group()
-  ;(builders[kind] || builders.bench)(g, w, d, opts)
+  let k = ALIAS[kind] || kind
+  if (kind === 'zone' && opts.id === 'recepcion') k = 'receiving'
+  ;(builders[k] || builders.workbench)(g, w, d, opts)
   return g
 }
 
-/* El pulpo: grúa de columna con una ventosa de cuatro brazos para mover láminas. */
-export function makeCrane() {
+/* Grúa de columna con gancho: mueve material pesado en cualquier taller. */
+export function makeHoist() {
   const g = new THREE.Group()
   cyl(g, 0.22, 4.2, M.black, 0, 0, 0, 'y', 16)
   box(g, 0.9, 0.2, 0.9, M.dark, 0, 0, 0)
@@ -220,14 +266,25 @@ export function makeCrane() {
   box(arm, 0.5, 0.35, 0.4, M.dark, 4.2, -0.1, 0)
   const cable = box(arm, 0.04, 1.6, 0.04, M.black, 4.0, -1.8, 0)
   cable.castShadow = false
-  const head = new THREE.Group()
-  head.position.set(4.0, -2.15, 0)
-  box(head, 1.4, 0.08, 0.08, M.dark, 0, 0, 0)
-  box(head, 0.08, 0.08, 1.4, M.dark, 0, 0, 0)
-  for (const [x, z] of [[0.65, 0], [-0.65, 0], [0, 0.65], [0, -0.65]]) cyl(head, 0.16, 0.06, M.black, x, -0.08, z, 'y', 14)
-  arm.add(head)
+  const hook = new THREE.Group()
+  hook.position.set(4.0, -2.0, 0)
+  box(hook, 0.3, 0.28, 0.22, M.dark, 0, -0.1, 0)
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.035, 8, 20, Math.PI * 1.5), M.steel)
+  ring.position.y = -0.3
+  ring.rotation.z = Math.PI * 0.75
+  hook.add(ring)
+  arm.add(hook)
   g.add(arm)
   g.userData.arm = arm
+  return g
+}
+
+/* Carro con una caja: la unidad de material que viaja por la planta. */
+export function makeCart() {
+  const g = new THREE.Group()
+  box(g, 0.85, 0.07, 0.6, M.dark, 0, -0.2, 0)
+  for (const [x, z] of [[-0.35, -0.24], [0.35, -0.24], [-0.35, 0.24], [0.35, 0.24]]) box(g, 0.07, 0.26, 0.07, M.black, x, -0.46, z)
+  crate(g, 0.6, 0.4, 0.46, 0, -0.13, 0, M.card)
   return g
 }
 
@@ -250,7 +307,8 @@ export function makeOperator() {
   return g
 }
 
-export function makeTruck(load = 'glass') {
+/* Camión: de plataforma con tarimas, o de caja cerrada. */
+export function makeTruck(load = 'flat') {
   const g = new THREE.Group()
   box(g, 2.3, 0.35, 8.2, M.black, 0, 0.45, 0)
   for (const z of [-2.8, -1.6, 2.6]) for (const s of [-1, 1]) cyl(g, 0.45, 0.35, M.black, s * 1.05, 0.45, z, 'x', 18)
@@ -261,7 +319,7 @@ export function makeTruck(load = 'glass') {
     box(g, 2.42, 0.25, 5.62, M.dark, 0, 2.3, -1.0)
   } else {
     box(g, 2.4, 0.15, 5.6, M.light, 0, 0.8, -1.0)
-    aframe(g, 0, -1.0, 4.8, 4, 1.9)
+    for (let i = 0; i < 4; i++) pallet(g, 0, -2.6 + i * 1.3, 1 + (i % 3), Math.PI / 2).position.y = 0.95
   }
   return g
 }

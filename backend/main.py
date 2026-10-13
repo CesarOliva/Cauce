@@ -87,7 +87,7 @@ def facts(a: dict) -> str:
     alts = "; ".join(f"{x['name']}: {x['metrics']['glass_m']:.0f} m al día" for x in a["alternatives"])
     return (
         f"Planta: {a['plant']['name']}. Demanda: {cur['demand']} piezas al día.\n"
-        f"Hoy: el vidrio recorre {cur['glass_m']:.0f} m al día; capacidad {cur['capacity']} piezas al día; "
+        f"Hoy: el material recorre {cur['glass_m']:.0f} m al día; capacidad {cur['capacity']} piezas al día; "
         f"tiempo de fabricación {cur['lead_h']} h por pieza, de ellas {cur['lead_parts']['cola']:.0f} min esperando en cola; "
         f"carga de camiones {cur['loading_min']:.0f} min al día.\n"
         f"Carga de cada estación hoy: {loads}.\n"
@@ -116,7 +116,7 @@ def fallback_report(a: dict) -> str:
     names = {s["id"]: s["name"] for s in a["plant"]["stations"]}
     c = a["comparison"]
     return (
-        f"Hoy el vidrio recorre {cur['glass_m']:.0f} m al día dentro de la bodega y cada pieza tarda {cur['lead_h']} h "
+        f"Hoy el material recorre {cur['glass_m']:.0f} m al día dentro de la bodega y cada pieza tarda {cur['lead_h']} h "
         f"en salir, aunque solo {cur['lead_parts']['proceso']:.0f} min son trabajo real. El resto es espera y transporte.\n\n"
         f"El cuello de botella es {names[cur['bottleneck']].lower()}: trabaja al {round(cur['bottleneck_util'] * 100)} % "
         f"y todo lo que viene después espera por ella.\n\n"
@@ -124,9 +124,9 @@ def fallback_report(a: dict) -> str:
         f"({c['glass_m']['pct']} %), la capacidad sube a {m['capacity']} piezas ({c['capacity']['pct']:+d} %) "
         f"y la carga de camiones baja a {m['loading_min']:.0f} min.\n\n"
         f"Acciones para esta semana:\n"
-        f"1. Pasar un operario de láminas a la pulidora.\n"
-        f"2. Despejar el portón B y poner un caballete por ruta en despacho.\n"
-        f"3. Medir durante cinco días los tiempos reales de pulido para confirmar estos supuestos.\n\n"
+        f"1. Reforzar {names[cur['bottleneck']].lower()} con un operario de la estación menos cargada.\n"
+        f"2. Despejar el portón de salida y separar lo terminado por ruta o cliente.\n"
+        f"3. Medir durante cinco días los tiempos reales del cuello de botella para confirmar estos supuestos.\n\n"
         f"(Informe generado sin IA: Ollama no respondió.)"
     )
 

@@ -11,7 +11,9 @@ salen de estas fórmulas.
 
 from __future__ import annotations
 
+import heapq
 import math
+from functools import lru_cache
 
 ALTERNATIVES = [
     {
@@ -59,6 +61,93 @@ def manhattan(a, b):
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
+# Enrutamiento por pasillos: el vidrio no atraviesa máquinas, oficina ni baños.
+STEP = 0.5      # resolución de la malla (m)
+MARGIN = 0.25   # holgura alrededor de cada obstáculo (m)
+TURN = 1.0      # castigo por giro (m): prefiere pasillos rectos
+
+
+def obstacles(plant, positions, skip):
+    rects = []
+    for s in plant["stations"]:
+        if s["id"] in skip or s["id"] not in positions:
+            continue
+        x, y, *r = positions[s["id"]]
+        rot = r[0] if r else 0
+        w, d = (s["d"], s["w"]) if rot % 180 else (s["w"], s["d"])
+        rects.append((x - w / 2, y - d / 2, x + w / 2, y + d / 2))
+    for f in plant["fixed"]:
+        rects.append((f["x"] - f["w"] / 2, f["z"] - f["d"] / 2, f["x"] + f["w"] / 2, f["z"] + f["d"] / 2))
+    return tuple(rects)
+
+
+@lru_cache(maxsize=8192)
+def _route(W, D, rects, a, b):
+    nx, ny = int(W / STEP), int(D / STEP)
+    blocked = set()
+    for x0, y0, x1, y1 in rects:
+        for i in range(max(0, math.ceil((x0 - MARGIN) / STEP + 1e-9)), min(nx, math.floor((x1 + MARGIN) / STEP - 1e-9)) + 1):
+            for j in range(max(0, math.ceil((y0 - MARGIN) / STEP + 1e-9)), min(ny, math.floor((y1 + MARGIN) / STEP - 1e-9)) + 1):
+                blocked.add((i, j))
+    clip = lambda v, n: max(0, min(n, round(v / STEP)))
+    start = (clip(a[0], nx), clip(a[1], ny))
+    goal = (clip(b[0], nx), clip(b[1], ny))
+    dirs = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    best = {(start, -1): 0.0}
+    parent = {}
+    heap = [(0.0, start, -1)]
+    end = None
+    while heap:
+        c, node, d = heapq.heappop(heap)
+        if best.get((node, d), 1e18) < c:
+            continue
+        if node == goal:
+            end = (node, d)
+            break
+        for k, (dx, dy) in enumerate(dirs):
+            n = (node[0] + dx, node[1] + dy)
+            if not (0 <= n[0] <= nx and 0 <= n[1] <= ny) or (n in blocked and n != goal):
+                continue
+            nc = c + STEP + (TURN if d not in (-1, k) else 0.0)
+            if nc < best.get((n, k), 1e18):
+                best[(n, k)] = nc
+                parent[(n, k)] = (node, d)
+                heapq.heappush(heap, (nc, n, k))
+    if end is None:
+        return None
+    nodes = [end[0]]
+    cur = end
+    while cur in parent:
+        cur = parent[cur]
+        nodes.append(cur[0])
+    nodes.reverse()
+    pts = [(a[0], a[1])]
+    for i in range(1, len(nodes) - 1):
+        p0, p1, p2 = nodes[i - 1], nodes[i], nodes[i + 1]
+        if (p1[0] - p0[0], p1[1] - p0[1]) != (p2[0] - p1[0], p2[1] - p1[1]):
+            pts.append((p1[0] * STEP, p1[1] * STEP))
+    pts.append((b[0], b[1]))
+    # El primer y el último tramo salen del centro: se alinean con la malla.
+    fixed = [pts[0]]
+    for q in pts[1:]:
+        p = fixed[-1]
+        if p[0] != q[0] and p[1] != q[1]:
+            fixed.append((q[0], p[1]))
+        fixed.append(q)
+    return fixed
+
+
+def route_leg(plant, positions, a_id, b_id):
+    """Distancia y trazo (esquinas) del vidrio entre dos estaciones, esquivando obstáculos."""
+    a, b = positions[a_id], positions[b_id]
+    rects = obstacles(plant, positions, {a_id, b_id})
+    pts = _route(plant["size"]["w"], plant["size"]["d"], rects, (a[0], a[1]), (b[0], b[1]))
+    if pts is None:
+        pts = [(a[0], a[1]), (b[0], a[1]), (b[0], b[1])]
+    dist = sum(abs(q[0] - p[0]) + abs(q[1] - p[1]) for p, q in zip(pts, pts[1:]))
+    return dist, [[round(x, 2), round(y, 2)] for x, y in pts]
+
+
 def gate_x(plant, gate_id):
     for g in plant["gates"]:
         if g["id"] == gate_id:
@@ -102,12 +191,11 @@ def evaluate(plant, positions, ops=None, receive_gate=None, dispatch_gate=None, 
     glass_m = 0.0
     walk_m = 0.0
     for e in edges:
-        a, b = positions[e["from"]], positions[e["to"]]
-        d = manhattan(a, b)
+        d, path = route_leg(plant, positions, e["from"], e["to"])
         glass_m += e["trips"] * d
         walk_m += e["trips"] * 2 * d
         handling[e["by"]] += e["trips"] * 2 * d / p["speed"]
-        legs.append({"from": e["from"], "to": e["to"], "dist": round(d, 1), "trips": round(e["trips"], 1), "meters": round(e["trips"] * d, 1)})
+        legs.append({"from": e["from"], "to": e["to"], "dist": round(d, 1), "trips": round(e["trips"], 1), "meters": round(e["trips"] * d, 1), "path": path})
 
     stations = []
     for s in plant["stations"]:

@@ -34,7 +34,7 @@ export async function stream(path, body, onToken, signal) {
   }
 }
 
-/* Recorrido diario del vidrio para un layout, igual que el motor en Python. */
+/* Recorrido diario del material para un layout, igual que el motor en Python. */
 export function glassMeters(plant, positions) {
   const p = plant.params
   let total = 0

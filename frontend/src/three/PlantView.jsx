@@ -65,8 +65,8 @@ export default function PlantView({ ref, plant, positions, extras, buildKey, onS
       </div>
       {legend && (
         <div className="scene-legend" aria-hidden="true">
-          <div className="legend-row"><span className="legend-swatch" />Recorrido del vidrio</div>
-          <div className="legend-row"><span className="legend-swatch legend-swatch--dash" />Solo piezas con sandblasting</div>
+          <div className="legend-row"><span className="legend-swatch" />Recorrido del material</div>
+          <div className="legend-row"><span className="legend-swatch legend-swatch--dash" />Solo una parte de las piezas</div>
           <div className="legend-row"><span className="legend-swatch--ring" />Cuello de botella</div>
         </div>
       )}

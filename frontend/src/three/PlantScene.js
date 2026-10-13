@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { M, box, makeCrane, makeMachine, makeOperator, makeTree, makeTruck } from './models'
+import { M, box, makeCart, makeHoist, makeMachine, makeOperator, makeTree, makeTruck } from './models'
 
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
 const easeOut = (t) => 1 - Math.pow(1 - t, 4)
@@ -141,17 +141,20 @@ export default class PlantScene {
     this.root.add(this.walls)
     this.buildWalls(opts)
 
+    this.hoist = null
+    const firstStore = plant.stations.find((q) => ['rack', 'storage'].includes(q.kind))
     for (const s of plant.stations) {
       const g = new THREE.Group()
       const model = makeMachine(s.kind, s.w, s.d, { id: s.id, sorted: opts.staging === 'sorted' })
       g.add(model)
-      g.userData = { id: s.id, name: s.name, model, h: s.kind === 'booth' ? 2.9 : 1.9 }
-      if (s.id === 'laminas' && opts.pulpo !== false) {
-        const crane = makeCrane()
+      g.userData = { id: s.id, name: s.name, model, h: ['booth', 'cabin'].includes(s.kind) ? 2.9 : 1.9 }
+      if (s === firstStore && opts.hoist !== false && opts.pulpo !== false) {
+        const crane = makeHoist()
         crane.position.set(s.w / 2 + 0.6, 0, -s.d / 2 + 0.4)
         crane.rotation.y = Math.PI * 0.9
         g.add(crane)
         g.userData.crane = crane
+        this.hoist = crane
       }
       const p = positions[s.id]
       g.position.set(p[0], 0, p[1])
@@ -175,7 +178,7 @@ export default class PlantScene {
     this.root.add(this.flow)
     this.extras = new THREE.Group()
     this.root.add(this.extras)
-    this.updateFlow(positions)
+    this.updateFlow(positions, false, opts.legs)
     this.applyExtras(opts)
   }
 
@@ -277,14 +280,14 @@ export default class PlantScene {
     const receiveX = gx(o.receiveGate || 'A')
     const trucks = o.trucks ?? 2
     for (let i = 0; i < trucks; i++) {
-      const tr = makeTruck(i === 0 ? 'glass' : 'box')
+      const tr = makeTruck(i === 0 ? 'flat' : 'box')
       const x = i === 0 ? dispatchX : dispatchX - 6
       tr.position.set(x, 0, this.D + 5.6 + (i ? 1.5 : 0))
       tr.userData.baseZ = tr.position.z
       this.extras.add(tr)
     }
     if (receiveX !== dispatchX) {
-      const van = makeTruck('glass')
+      const van = makeTruck('flat')
       van.scale.setScalar(0.85)
       van.position.set(receiveX, 0, this.D + 5.4)
       this.extras.add(van)
@@ -348,26 +351,27 @@ export default class PlantScene {
     this.labelNodes.set(id, n)
   }
 
-  /* ---------- Recorridos del vidrio ---------- */
+  /* ---------- Recorridos del material ---------- */
 
-  pathPoints(a, b, i) {
+  pathPoints(a, b, i, leg) {
     const off = (i % 3) * 0.35 - 0.35
     const y = 0.07
+    if (leg?.path?.length > 1) return leg.path.map(([x, z]) => new THREE.Vector3(x + off, y, z + off))
     return [new THREE.Vector3(a[0] + off, y, a[1] + off), new THREE.Vector3(b[0] + off, y, a[1] + off), new THREE.Vector3(b[0] + off, y, b[1] + off)]
   }
 
-  updateFlow(positions, draw = false) {
+  updateFlow(positions, draw = false, legs = this.legs) {
+    this.legs = legs
     this.flow.clear()
     this.particles = []
     const p = this.plant.params
-    const glassGeo = new THREE.BoxGeometry(0.7, 0.5, 0.04)
     this.plant.routing.forEach((e, i) => {
       const a = positions[e.from]
       const b = positions[e.to]
       if (!a || !b) return
       const trips = (p.demand * e.frac * e.per) / (e.batch || p.batch)
       const width = 0.14 + Math.min(trips, 25) * 0.012
-      const pts = this.pathPoints(a, b, i)
+      const pts = this.pathPoints(a, b, i, legs?.find((l) => l.from === e.from && l.to === e.to))
       const dashed = e.frac < 1
       const segs = []
       let total = 0
@@ -401,9 +405,7 @@ export default class PlantScene {
       }
       const count = Math.max(1, Math.round(trips / 7))
       for (let c = 0; c < count; c++) {
-        const mesh = new THREE.Mesh(glassGeo, M.glass)
-        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(glassGeo), new THREE.LineBasicMaterial({ color: 0x000000 }))
-        mesh.add(edges)
+        const mesh = makeCart()
         this.flow.add(mesh)
         this.particles.push({ mesh, segs, total, t: c / count, speed: 3.2 / Math.max(total, 1) })
       }
@@ -412,7 +414,7 @@ export default class PlantScene {
 
   /* ---------- Movimiento de máquinas ---------- */
 
-  setLayout(positions, { animate = true, onDone } = {}) {
+  setLayout(positions, { animate = true, onDone, legs } = {}) {
     let latest = 0
     const order = [...this.stations.keys()].filter((id) => positions[id])
     order.forEach((id, i) => {
@@ -452,7 +454,7 @@ export default class PlantScene {
     this.flow.visible = !animate
     const finish = () => {
       this.flow.visible = true
-      this.updateFlow(positions, true)
+      this.updateFlow(positions, true, legs)
       onDone?.()
     }
     if (animate && latest > 0) setTimeout(finish, latest * 1000 + 80)
@@ -565,7 +567,7 @@ export default class PlantScene {
       }
     }
 
-    const crane = this.stations.get('laminas')?.userData.crane
+    const crane = this.hoist
     if (crane) crane.userData.arm.rotation.y = Math.sin(time * 0.4) * 0.6
 
     for (const tr of this.extras.children) if (tr.userData.baseZ) tr.position.y = Math.sin(time * 1.3) * 0.015

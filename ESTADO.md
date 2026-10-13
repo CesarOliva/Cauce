@@ -22,19 +22,42 @@ Nombre: **Cauce**, el canal por donde corre el flujo. La marca es la planta vist
 - `src/three/PlantScene.js`: escena completa (bodega, calle, portones, recorridos animados, piezas de vidrio en tránsito, anillo del cuello de botella, máquinas que se elevan y se mueven a su lugar nuevo, vista 3D o desde arriba, hover y enfoque).
 - `src/three/PlantView.jsx`: envoltura de React.
 
+## Hecho también (sesión 2)
+
+- `src/charts/`: `Tip`, `LoadChart`, `FlowPlan`, `LeadChart`, `RelChart`.
+- `src/steps/`: `Story`, `Plant`, `Diagnosis`, `Redesign`, `Workshop` (los 5 pasos).
+- `src/components/`: `EngineerChat` y `useReport` (informe en streaming que vive en App).
+- `src/App.jsx` (riel, transición, estado, toast) y `README.md` en la raíz.
+- `npm run build` compila sin errores.
+
+## Sesión 3
+
+- Enrutamiento por pasillos en `engine.py` (`route_leg`): el vidrio rodea máquinas, oficina y baños (Dijkstra en malla de 0,5 m con castigo por giro). Cada tramo trae su `path`; `FlowPlan` y el juego lo dibujan. El juego calcula el recorrido exacto con `/api/evaluate` al soltar. La búsqueda del rediseño sigue usando distancia rectilínea como heurística.
+- Pruebas de lectura de historias: `pruebas/historias.json` y `pruebas/probar_historias.py` (con el backend corriendo).
+- Hallazgos de esas pruebas: ver sección siguiente.
+
+## Representaciones genéricas (sesión 4)
+
+- `models.js` ya no dibuja vidrio: tipos de estación genéricos `storage`, `gantry`, `workbench`, `line`, `cabin`, `tunnel`, `packing`, `receiving`, `dispatch`, `office`, `restroom`. Los nombres viejos (`rack`, `table`, `polisher`...) siguen funcionando como alias; un tipo desconocido se dibuja como banco de trabajo.
+- Unidad de material: carro con caja (`makeCart`). Camión de plataforma con tarimas. Grúa con gancho (`makeHoist`) sobre el primer `storage`.
+- El 3D usa los trazos del motor (`legs[].path`), igual que los diagramas: ya no cruza oficina ni baños.
+- Textos de la interfaz y del informe de respaldo hablan de "material", no de "vidrio". El campo de la API sigue llamándose `glass_m`.
+- Para otra industria basta cambiar `kind` en la plantilla de `plant.py`.
+
+## Límites de la lectura de historias (hallazgos)
+
+1. Otros rubros (aluminio, carpintería) se fuerzan a la plantilla de vidrio: aparecen pulidora, sandblasting y lavadora como "supuestas". Falta plantilla por industria (fase 3) o avisar al usuario.
+2. Las reglas no leen cifras escritas con letra ("cinco personas", "dos entregas") ni unidades distintas a pieza, vidrio o unidad ("25 ventanas", "8 muebles por semana"); la IA tampoco las rescató.
+3. Con menos de 8 operarios la planta sube a 8 (mínimo fijo).
+4. Bien: números con dígitos, bisel como pulido, problemas del texto como notas.
+
 ## Falta
 
-1. Gráficos en `src/charts/` (se escribieron pero no se guardaron): `Tip.jsx` (tooltip), `LoadChart.jsx` (carga frente a capacidad), `FlowPlan.jsx` (diagrama de espagueti), `LeadChart.jsx` (en qué se van las horas) y `RelChart.jsx` (tabla de relaciones).
-2. Pasos en `src/steps/`:
-   - `Story.jsx`: historia con dictado por voz (Web Speech), lectura con IA, chips de estación (mencionada o supuesta) y supuestos editables.
-   - `Plant.jsx`: planta actual en 3D y foto aérea opcional que sube el usuario.
-   - `Diagnosis.jsx`: KPI, gráficos e informe del ingeniero en streaming.
-   - `Redesign.jsx`: 3 alternativas, botón "Mover máquinas", antes y después y cambios de operarios.
-   - `Workshop.jsx`: gamificación con nivel, puntos, misiones de la IA, insignias, tablero por turno y un juego para arrastrar máquinas.
-3. `src/components/EngineerChat.jsx`: panel para preguntarle al ingeniero.
-4. `src/App.jsx` (riel lateral, transición entre pasos y estado) y `src/main.jsx`.
-5. Compilar (`npm run build`), revisar en el navegador y corregir.
-6. Un README con los pasos para ejecutarlo.
+1. Revisar en el navegador real (no se pudo con el navegador integrado) y corregir detalles visuales: tamaños de los gráficos, rotulado de `RelChart`, cursor sobre el juego.
+2. Foto aérea: hoy solo se sube a mano; falta generarla con un proveedor de imágenes (ver contexto-proyecto.md, sección 7).
+3. Si el usuario edita «operarios de planta», los operarios por estación de hoy no se redistribuyen (solo afecta al rediseño).
+4. Reducir el bundle (1 MB): dividir three.js con import dinámico.
+5. Decisiones abiertas de contexto-proyecto.md (stack final, modelo de negocio, MCP).
 
 ## Cómo ejecutar
 

@@ -19,15 +19,15 @@ GLASS_WORKSHOP = {
     # t: minutos de trabajo por pieza que pasa por la estación.
     # share: fracción de las piezas que pasan por la estación.
     "stations": [
-        {"id": "recepcion", "name": "Recepción de láminas", "kind": "zone", "w": 6, "d": 4.5, "t": 0.0, "ops": 0, "share": 1.0},
-        {"id": "laminas", "name": "Almacén de láminas", "kind": "rack", "w": 6.5, "d": 4.5, "t": 1.2, "ops": 2, "share": 1.0},
-        {"id": "corte", "name": "Mesa de corte", "kind": "table", "w": 6, "d": 4, "t": 4.2, "ops": 2, "share": 1.0},
-        {"id": "recorte", "name": "Recorte", "kind": "bench", "w": 4.5, "d": 3, "t": 1.0, "ops": 1, "share": 1.0},
-        {"id": "pulido", "name": "Pulidora", "kind": "polisher", "w": 7, "d": 2.6, "t": 4.6, "ops": 1, "share": 1.0},
-        {"id": "sandblast", "name": "Sandblasting", "kind": "booth", "w": 5, "d": 4.5, "t": 3.6, "ops": 1, "share": 0.35},
-        {"id": "lavado", "name": "Lavadora", "kind": "washer", "w": 5.5, "d": 2.6, "t": 1.0, "ops": 1, "share": 1.0},
-        {"id": "empaque", "name": "Empaque", "kind": "pack", "w": 5, "d": 4, "t": 2.0, "ops": 1, "share": 1.0},
-        {"id": "despacho", "name": "Despacho", "kind": "zone", "w": 6, "d": 4.5, "t": 2.6, "ops": 1, "share": 1.0},
+        {"id": "recepcion", "name": "Recepción de láminas", "kind": "receiving", "w": 6, "d": 4.5, "t": 0.0, "ops": 0, "share": 1.0},
+        {"id": "laminas", "name": "Almacén de láminas", "kind": "storage", "w": 6.5, "d": 4.5, "t": 1.2, "ops": 2, "share": 1.0},
+        {"id": "corte", "name": "Mesa de corte", "kind": "gantry", "w": 6, "d": 4, "t": 4.2, "ops": 2, "share": 1.0},
+        {"id": "recorte", "name": "Recorte", "kind": "workbench", "w": 4.5, "d": 3, "t": 1.0, "ops": 1, "share": 1.0},
+        {"id": "pulido", "name": "Pulidora", "kind": "line", "w": 7, "d": 2.6, "t": 4.6, "ops": 1, "share": 1.0},
+        {"id": "sandblast", "name": "Sandblasting", "kind": "cabin", "w": 5, "d": 4.5, "t": 3.6, "ops": 1, "share": 0.35},
+        {"id": "lavado", "name": "Lavadora", "kind": "tunnel", "w": 5.5, "d": 2.6, "t": 1.0, "ops": 1, "share": 1.0},
+        {"id": "empaque", "name": "Empaque", "kind": "packing", "w": 5, "d": 4, "t": 2.0, "ops": 1, "share": 1.0},
+        {"id": "despacho", "name": "Despacho", "kind": "dispatch", "w": 6, "d": 4.5, "t": 2.6, "ops": 1, "share": 1.0},
     ],
     "fixed": [
         {"id": "oficina", "name": "Oficina (ventas y nómina)", "kind": "office", "x": 22.5, "z": 18, "w": 8, "d": 6},
