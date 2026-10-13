@@ -9,6 +9,7 @@ export default function PlantView({ ref, plant, positions, extras, buildKey, onS
   const labels = useRef(null)
   const scene = useRef(null)
   const [view, setView] = useState('3d')
+  const placed = useRef(false)
   const posRef = useRef(positions)
   posRef.current = positions
 
@@ -18,6 +19,7 @@ export default function PlantView({ ref, plant, positions, extras, buildKey, onS
       onSelect: (id) => onSelect?.(id),
     })
     scene.current = s
+    placed.current = false
     return () => {
       setCursor({ label: null })
       s.dispose()
@@ -29,7 +31,9 @@ export default function PlantView({ ref, plant, positions, extras, buildKey, onS
   useEffect(() => {
     if (!scene.current || !plant) return
     scene.current.build(plant, posRef.current, extras)
-    scene.current.setView(view)
+    // La cámara se coloca solo la primera vez: al reconstruir (por ejemplo al editar) se queda donde estaba.
+    if (!placed.current) scene.current.setView(view)
+    placed.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plant, buildKey])
 
@@ -67,6 +71,7 @@ export default function PlantView({ ref, plant, positions, extras, buildKey, onS
         <div className="scene-legend" aria-hidden="true">
           <div className="legend-row"><span className="legend-swatch" />Recorrido del material</div>
           <div className="legend-row"><span className="legend-swatch legend-swatch--dash" />Solo una parte de las piezas</div>
+          <div className="legend-row"><span className="legend-arrow" />Dirección del material</div>
           <div className="legend-row"><span className="legend-swatch--ring" />Cuello de botella</div>
         </div>
       )}

@@ -1,16 +1,15 @@
 import { useMemo, useRef, useState } from 'react'
+import { fmt } from '../api'
 import Btn from '../fx/Btn'
 import { Appear, RevealTitle } from '../fx/Reveal'
 import PlantView from '../three/PlantView'
 
-/* Planta de hoy en 3D. La foto aérea es opcional: la sube el usuario
-   (por ejemplo una imagen hecha con ChatGPT) y se guarda en el navegador. */
-export default function Plant({ analysis, notes, photo, setPhoto, onNext }) {
+/* Paso 2: la planta guardada en el paso 1, en 3D y solo para ver. */
+export default function Plant({ plant, analysis, notes, photo, setPhoto, onNext, onEdit }) {
   const [over, setOver] = useState(false)
   const input = useRef(null)
   const view = useRef(null)
   const cur = analysis.current
-  const plant = analysis.plant
 
   const load = (file) => {
     if (!file || !file.type.startsWith('image/')) return
@@ -22,39 +21,62 @@ export default function Plant({ analysis, notes, photo, setPhoto, onNext }) {
 
   const extras = useMemo(
     () => ({
-      gates: ['A', 'B'],
-      blocked: ['B'],
-      receiveGate: plant.current.receive_gate,
-      dispatchGate: plant.current.dispatch_gate,
       trucks: 2,
-      ops: Object.fromEntries(cur.stations.map((s) => [s.id, s.ops])),
+      ops: plant.use_assumptions ? Object.fromEntries(plant.stations.map((s) => [s.id, s.ops || 0])) : {},
       bottleneck: cur.bottleneck,
       bottleneckUtil: cur.bottleneck_util,
-      staging: 'mixed',
       legs: cur.legs,
     }),
-    [plant.current, cur],
+    [plant, cur],
   )
 
   return (
     <section className="step">
       <header className="step-head">
         <span className="step-index">02 / Tu planta hoy</span>
-        <RevealTitle text="Así se ve tu planta, tal como la contaste." />
-        <p className="lede">
-          Esta es la bodega con las máquinas donde las puse según tu historia. El anillo marca el cuello de botella. Gira, acércate y haz clic en una máquina para enfocarla.
-        </p>
+        <RevealTitle text="Así quedó tu planta." />
+        <p className="lede">Es el plano que guardaste, en 3D. Las flechas marcan hacia dónde va el material. Para cambiar algo, vuelve al paso 1.</p>
       </header>
 
       <Appear>
-        <PlantView ref={view} plant={plant} positions={plant.current.positions} extras={extras} buildKey="hoy" onSelect={(id) => view.current?.focus(id)} />
+        <PlantView
+          ref={view}
+          plant={plant}
+          positions={plant.layout}
+          extras={extras}
+          buildKey="hoy"
+          onSelect={(id) => view.current?.focus(id)}
+          tools={
+            <Btn size="small" variant="ghost" onClick={onEdit}>
+              Editar plano
+            </Btn>
+          }
+        />
       </Appear>
 
       <div className="grid-2" style={{ marginTop: 32 }}>
         <Appear className="block">
+          <h3>Lo que veo</h3>
+          <ul className="note-list" style={{ marginTop: 14 }}>
+            <li>
+              Bodega de {plant.size.w} × {plant.size.d} m con {plant.stations.length} estaciones, {plant.routes.length} rutas y {plant.zones.length} zonas sin paso.
+            </li>
+            <li>Una pieza recorre {fmt(cur.piece_m, 1)} m de principio a fin.</li>
+            {cur.blocked_legs > 0 && <li>{cur.blocked_legs} rutas no tienen paso libre; se cuentan en línea recta.</li>}
+            {cur.avoid_hits.map((h, i) => (
+              <li key={i}>{h.text}: el polvo, ruido o calor le llega.</li>
+            ))}
+            {notes.map((n, i) => (
+              <li key={`n${i}`}>{n}</li>
+            ))}
+            <li>{plant.use_assumptions ? 'Con supuestos: el diagnóstico incluye capacidad, tiempos y camiones.' : 'Sin supuestos: el diagnóstico muestra solo recorridos y cercanías.'}</li>
+          </ul>
+        </Appear>
+
+        <Appear className="block" delay={0.1}>
           <h3>Foto aérea (opcional)</h3>
           <p className="small" style={{ margin: '6px 0 14px' }}>
-            Si tienes una toma desde arriba de la bodega, súbela para tenerla a mano junto al modelo. No sale del navegador.
+            Si tienes una toma desde arriba, súbela para compararla con el modelo. No sale del navegador.
           </p>
           <div
             className="photo-drop"
@@ -70,24 +92,12 @@ export default function Plant({ analysis, notes, photo, setPhoto, onNext }) {
               load(e.dataTransfer.files[0])
             }}
           >
-            {photo ? <img src={photo} alt="Foto aérea de la bodega" /> : <p className="small">Arrastra una imagen aquí</p>}
+            {photo ? <img src={photo} alt="Foto aérea de la planta" /> : <p className="small">Arrastra una imagen aquí</p>}
             <button type="button" className="btn btn--ghost btn--small" onClick={() => input.current?.click()}>
               {photo ? 'Cambiar foto' : 'Elegir archivo'}
             </button>
             <input ref={input} type="file" accept="image/*" hidden onChange={(e) => load(e.target.files[0])} />
           </div>
-        </Appear>
-
-        <Appear className="block" delay={0.1}>
-          <h3>Lo que veo en tu planta</h3>
-          <ul className="note-list" style={{ marginTop: 14 }}>
-            {notes.map((n, i) => (
-              <li key={i}>{n}</li>
-            ))}
-            <li>
-              Medidas de la bodega: {plant.size.w} × {plant.size.d} m, {plant.stations.length} estaciones y {plant.params.floor_ops} operarios de planta (supuesto si no los diste).
-            </li>
-          </ul>
         </Appear>
       </div>
 

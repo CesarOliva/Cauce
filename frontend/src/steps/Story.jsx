@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { fmt } from '../api'
+import PlanEditor from '../editor/PlanEditor'
 import Btn from '../fx/Btn'
 import { Appear, RevealTitle } from '../fx/Reveal'
 
@@ -11,12 +13,8 @@ function useDictation(onText) {
   const rec = useRef(null)
   const [on, setOn] = useState(false)
   const Api = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null
-
   const toggle = () => {
-    if (on) {
-      rec.current?.stop()
-      return
-    }
+    if (on) return rec.current?.stop()
     const r = new Api()
     r.lang = 'es-CO'
     r.continuous = true
@@ -34,25 +32,134 @@ function useDictation(onText) {
   return { on, toggle, supported: !!Api }
 }
 
-export default function Story({ text, setText, result, reading, error, onRead, onAssumption, onBuild, building }) {
+/* Segundos desde que empezó la lectura (el modelo local puede tardar). */
+function Elapsed() {
+  const [s, setS] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setS((v) => v + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return <span className="small num">{s} s</span>
+}
+
+function Switch({ on, onChange, children }) {
+  return (
+    <button type="button" className="switch" role="switch" aria-checked={on} onClick={() => onChange(!on)}>
+      <span className="switch-track">
+        <span className="switch-knob" />
+      </span>
+      {children}
+    </button>
+  )
+}
+
+/* Supuestos opcionales: sin ellos solo se calculan recorridos y cercanías. */
+function Assumptions({ draft, setDraft, catalog, info }) {
+  const on = !!draft.use_assumptions
+  const src = Object.fromEntries((info?.assumptions || []).map((a) => [a.key, a.source]))
+  const setParam = (k, v) => setDraft({ ...draft, params: { ...draft.params, [k]: v } })
+  const setSt = (id, patch) => setDraft({ ...draft, stations: draft.stations.map((s) => (s.id === id ? { ...s, ...patch } : s)) })
+  const people = draft.stations.reduce((a, s) => a + (Number(s.ops) || 0), 0)
+
+  return (
+    <div className="block stack">
+      <div className="chart-head">
+        <div>
+          <h3>Supuestos para calcular</h3>
+          <p className="small">Sin supuestos solo veo recorridos y qué tan cerca debe estar cada área. Con ellos calculo capacidad, cuello de botella, tiempos y camiones.</p>
+        </div>
+        <Switch on={on} onChange={(v) => setDraft({ ...draft, use_assumptions: v })}>
+          {on ? 'Usar supuestos' : 'Sin supuestos'}
+        </Switch>
+      </div>
+
+      {on && (
+        <>
+          {info?.ai_assumptions?.length > 0 && (
+            <details className="how">
+              <summary>Lo que supuso la IA al leer tu historia</summary>
+              <ul>
+                {info.ai_assumptions.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <div className="assume assume--grid">
+            {catalog?.assumptions.map((a) => (
+              <div key={a.key} className="assume-row" data-src={src[a.key] || 'supuesto'}>
+                <div>
+                  <label htmlFor={`a-${a.key}`}>{a.label}</label>
+                  <span className="small">
+                    {a.why} ({a.unit})
+                  </span>
+                </div>
+                <input id={`a-${a.key}`} type="number" step="any" min="0" value={draft.params?.[a.key] ?? a.value} onChange={(e) => setParam(a.key, Number(e.target.value))} />
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <div className="chart-head">
+              <h3>Tiempos y personas por estación</h3>
+              <span className="small num">{people} personas en planta</span>
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Estación</th>
+                  <th className="num">Minutos por pieza</th>
+                  <th className="num">Operarios</th>
+                </tr>
+              </thead>
+              <tbody>
+                {draft.stations.map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      {s.name}
+                      {s.t_source === 'ia' && <span className="small"> (estimado por la IA)</span>}
+                    </td>
+                    <td className="num">
+                      <input className="cell-input" type="number" min="0" step="0.1" value={s.t ?? 0} onChange={(e) => setSt(s.id, { t: Number(e.target.value), t_source: 'usuario' })} aria-label={`Minutos por pieza en ${s.name}`} />
+                    </td>
+                    <td className="num">
+                      <input className="cell-input" type="number" min="0" step="1" value={s.ops ?? 0} onChange={(e) => setSt(s.id, { ops: Math.max(0, Math.round(Number(e.target.value))) })} aria-label={`Operarios en ${s.name}`} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="small" style={{ marginTop: 8 }}>
+              Con 0 operarios y minutos mayores a 0, la estación se toma como máquina automática.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+export default function Story({ text, setText, info, draft, setDraft, catalog, reading, error, onRead, onBlank, onExample, onSave, saving }) {
   const dict = useDictation((t) => setText((prev) => (prev ? prev + ' ' : '') + t))
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
+  const [metrics, setMetrics] = useState(null)
+  const editorRef = useRef(null)
+
+  const scrollToEditor = () => setTimeout(() => editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120)
 
   return (
     <section className="step">
       <header className="step-head">
-        <span className="step-index">01 / Historia</span>
-        <RevealTitle text="Cuéntame cómo era tu planta." />
-        <p className="lede">
-          No necesitas planos ni cifras. Cuenta la historia: qué máquinas había, cuánta gente trabajaba, cómo salía el producto. Lo que no sepas lo supongo yo, y lo dejo escrito para que lo corrijas.
-        </p>
+        <span className="step-index">01 / Historia y plano</span>
+        <RevealTitle text="Cuéntame cómo es tu planta." />
+        <p className="lede">Cuenta la historia y la IA arma un primer plano. Luego lo corriges tú: mueve máquinas, dibuja rutas, paredes y zonas hasta que quede como es de verdad.</p>
       </header>
 
       <div className="split">
         <Appear className="stack">
           <div className="panel">
             <div className="story-sheet" style={{ border: 0 }}>
-              <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Mi papá tenía un taller de…" aria-label="Historia de tu planta" />
+              <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Mi papá tenía un taller de…" aria-label="Historia de tu planta" style={{ minHeight: 260 }} />
             </div>
             <div className="story-bar">
               <div className="row">
@@ -68,31 +175,32 @@ export default function Story({ text, setText, result, reading, error, onRead, o
                   </button>
                 )}
                 <button type="button" className="btn btn--ghost btn--small" onClick={() => setText(EXAMPLE_STORY)}>
-                  Usar el taller de vidrio
+                  Historia de ejemplo
                 </button>
               </div>
               <span className="small num">{words} palabras</span>
             </div>
           </div>
           <div className="row">
-            <Btn onClick={onRead} disabled={reading || words < 8}>
-              {reading ? 'Leyendo…' : 'Leer mi historia'}
+            <Btn
+              onClick={async () => {
+                if (await onRead()) scrollToEditor()
+              }}
+              disabled={reading || words < 6}
+            >
+              {reading ? 'Leyendo…' : 'Leer con IA'}
             </Btn>
-            {error && <span className="small">{error}</span>}
+            <button type="button" className="btn btn--ghost btn--small" onClick={() => (onBlank(), scrollToEditor())}>
+              Dibujar desde cero
+            </button>
+            <button type="button" className="btn btn--ghost btn--small" onClick={async () => (await onExample(), scrollToEditor())}>
+              Cargar el taller de vidrio
+            </button>
           </div>
+          {error && <p className="small">{error}</p>}
         </Appear>
 
         <div className="stack">
-          {!result && !reading && (
-            <div className="block">
-              <h3>Qué pasa después</h3>
-              <ul className="note-list" style={{ marginTop: 14 }}>
-                <li>Leo la historia y marco qué máquinas mencionaste y cuáles supongo.</li>
-                <li>Armo tu planta en 3D con medidas y recorridos de ejemplo.</li>
-                <li>Hago el diagnóstico de un ingeniero de procesos y propongo un rediseño.</li>
-              </ul>
-            </div>
-          )}
           {reading && (
             <div className="block reading">
               <div className="dots" aria-hidden="true">
@@ -100,65 +208,76 @@ export default function Story({ text, setText, result, reading, error, onRead, o
                 <i data-off="true" />
                 <i data-off="true" />
               </div>
-              <p>Leyendo tu historia…</p>
+              <p>La IA está leyendo tu historia y armando el JSON de la planta…</p>
+              <Elapsed />
+              <p className="small">Con un modelo local puede tardar uno o dos minutos.</p>
             </div>
           )}
-          {result && !reading && (
-            <Appear className="stack">
-              <div className="block">
-                <div className="chart-head" style={{ marginBottom: 14 }}>
-                  <h3>Lo que entendí</h3>
-                  <span className="small">{result.source === 'ia' ? 'Lectura con IA' : 'Lectura por reglas (la IA no respondió)'}</span>
-                </div>
+          {!reading && !info && (
+            <div className="block">
+              <h3>Cómo funciona</h3>
+              <ul className="note-list" style={{ marginTop: 14 }}>
+                <li>Una IA lee la historia y devuelve solo datos: máquinas, rutas, zonas y cifras. No inventa máquinas que no menciones.</li>
+                <li>Con eso armo un primer plano. Tú lo corriges en el editor de abajo.</li>
+                <li>Los supuestos (tiempos, producción) son opcionales: sin ellos analizo solo recorridos.</li>
+              </ul>
+            </div>
+          )}
+          {!reading && info && (
+            <Appear className="block">
+              <div className="chart-head" style={{ marginBottom: 12 }}>
+                <h3>Lo que entendí</h3>
+                <span className="small">{info.source === 'ia' ? 'Leído con IA' : info.source === 'reglas' ? 'Leído por reglas (la IA no respondió)' : info.source}</span>
+              </div>
+              {draft && (
                 <div className="chips">
-                  {result.stations.map((s) => (
-                    <span key={s.id} className="chip" data-kind={s.mentioned ? 'historia' : 'supuesto'} title={s.mentioned ? 'Lo mencionaste' : 'Lo supuse'}>
+                  {draft.stations.map((s) => (
+                    <span key={s.id} className="chip">
                       <i />
                       {s.name}
                     </span>
                   ))}
-                </div>
-                <p className="small" style={{ marginTop: 12 }}>
-                  Sólido: lo mencionaste. Punteado: lo supuse porque un taller así lo suele tener.
-                </p>
-                {result.notes.length > 0 && (
-                  <ul className="note-list" style={{ marginTop: 16 }}>
-                    {result.notes.map((n, i) => (
-                      <li key={i}>{n}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              <div className="block">
-                <h3>Supuestos que puedes cambiar</h3>
-                <p className="small" style={{ margin: '6px 0 14px' }}>
-                  Datos de tu historia y supuestos míos. Cámbialos con lo que recuerdes.
-                </p>
-                <div className="assume">
-                  {result.assumptions.map((a) => (
-                    <div key={a.key} className="assume-row" data-src={a.source}>
-                      <div>
-                        <label htmlFor={`a-${a.key}`}>{a.label}</label>
-                        <span className="small">
-                          {a.why} ({a.unit})
-                        </span>
-                      </div>
-                      <input id={`a-${a.key}`} type="number" step="any" min="0" value={a.value} onChange={(e) => onAssumption(a.key, e.target.value)} />
-                    </div>
+                  {draft.zones.map((z) => (
+                    <span key={z.id} className="chip" data-kind="supuesto">
+                      <i />
+                      {z.name}
+                    </span>
                   ))}
                 </div>
-              </div>
-
-              <div className="row">
-                <Btn onClick={onBuild} disabled={building}>
-                  {building ? 'Construyendo…' : 'Construir mi planta'}
-                </Btn>
-              </div>
+              )}
+              {info.notes?.length > 0 && (
+                <ul className="note-list" style={{ marginTop: 16 }}>
+                  {info.notes.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+              )}
             </Appear>
           )}
         </div>
       </div>
+
+      {draft && (
+        <div ref={editorRef} style={{ marginTop: 48, scrollMarginTop: 24 }}>
+          <div className="chart-head" style={{ marginBottom: 16 }}>
+            <h2>Tu plano</h2>
+            <span className="small">Se guarda solo en este navegador.</span>
+          </div>
+          <PlanEditor plant={draft} positions={draft.layout} onChange={(p, pos) => setDraft({ ...p, layout: pos })} catalog={catalog} mode="full" onMetrics={setMetrics} />
+
+          <div style={{ marginTop: 24 }}>
+            <Assumptions draft={draft} setDraft={setDraft} catalog={catalog} info={info} />
+          </div>
+
+          <div className="row" style={{ marginTop: 32 }}>
+            <Btn onClick={onSave} disabled={saving || draft.stations.length === 0}>
+              {saving ? 'Analizando…' : 'Guardar y ver en 3D'}
+            </Btn>
+            {metrics && <span className="small num">Una pieza recorre {fmt(metrics.piece_m, 1)} m en este plano.</span>}
+            {draft.stations.length === 0 && <span className="small">Agrega al menos una máquina.</span>}
+          </div>
+        </div>
+      )}
     </section>
   )
 }

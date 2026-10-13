@@ -1,3 +1,4 @@
+import { shortName } from '../editor/geometry'
 import { useTip } from './Tip'
 
 const STYLE = {
@@ -9,12 +10,8 @@ const STYLE = {
   X: { fill: '#fff', ink: '#000', word: 'No deben estar juntas' },
 }
 
-const short = (n) =>
-  n
-    .replace('Almacén de láminas', 'Láminas')
-    .replace('Recepción de láminas', 'Recepción')
-    .replace('Mesa de ', '')
-    .replace('Oficina (ventas y nómina)', 'Oficina')
+// Nombre corto para la tabla: sin paréntesis y recortado.
+const short = (n) => shortName(n.replace(/\s*\(.*\)\s*/, ''), 14)
 
 /* Tabla de relaciones entre áreas: qué tan cerca deben estar dos áreas. */
 export default function RelChart({ relations, title = 'Qué tan cerca debe estar cada área de otra' }) {

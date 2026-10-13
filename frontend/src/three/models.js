@@ -242,16 +242,174 @@ const builders = {
     }
     box(g, w * 0.7, 0.85, 0.5, M.light, 0, 0, d / 2 - 0.4)
   },
+  /* Caja gris con huecos de entrada y salida: representa cualquier proceso sin maqueta propia. */
+  generic(g, w, d) {
+    const bw = Math.max(1, w - 1.2)
+    box(g, bw, 1.8, d * 0.85, M.mid, 0, 0, 0)
+    box(g, bw + 0.08, 0.08, d * 0.85 + 0.08, M.dark, 0, 1.8, 0)
+    for (const side of [-1, 1]) {
+      box(g, 0.04, 0.9, d * 0.42, M.black, side * (bw / 2 + 0.01), 0.35, 0)
+      box(g, 0.6, 0.65, d * 0.42, M.dark, side * (bw / 2 + 0.3), 0, 0)
+    }
+    crate(g, 0.45, 0.25, 0.35, -(bw / 2 + 0.3), 0.65, 0, M.card)
+  },
+  /* Sierra: mesa con disco y guarda. */
+  saw(g, w, d) {
+    for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(g, 0.1, 0.85, 0.1, M.black, lx * (w / 2 - 0.2), 0, lz * (d / 2 - 0.2))
+    box(g, w, 0.08, d * 0.8, M.light, 0, 0.85, 0)
+    const blade = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.03, 32), M.steel)
+    blade.rotation.x = Math.PI / 2
+    blade.position.set(0, 1.0, 0)
+    g.add(blade)
+    box(g, 0.9, 0.35, 0.2, M.dark, 0, 1.25, 0)
+    crate(g, w * 0.55, 0.05, 0.6, -w * 0.15, 0.93, d * 0.2, M.card)
+    box(g, 0.6, 0.85, 0.6, M.dark, w / 2 - 0.5, 0, -d / 2 + 0.5)
+  },
+  /* Máquina CNC: cabina cerrada con ventana y panel. */
+  cnc(g, w, d) {
+    box(g, w * 0.78, 2.0, d * 0.85, M.light, -w * 0.08, 0, 0)
+    box(g, w * 0.5, 0.9, 0.04, M.black, -w * 0.08, 0.8, d * 0.425 + 0.02)
+    box(g, 0.5, 1.6, 0.35, M.dark, w * 0.38, 0, d * 0.3)
+    cyl(g, 0.06, 0.6, M.black, w * 0.28, 2.0, -d * 0.3, 'y', 10)
+    for (let i = 0; i < 3; i++) cyl(g, 0.09, 0.12, i === 0 ? M.white : M.mid, w * 0.28, 2.6 + i * 0.13, -d * 0.3, 'y', 12)
+  },
+  /* Torno: bancada larga con cabezal y contrapunto. */
+  lathe(g, w, d) {
+    for (const x of [-w * 0.35, w * 0.35]) box(g, 0.5, 0.75, d * 0.6, M.dark, x, 0, 0)
+    box(g, w * 0.9, 0.25, d * 0.45, M.black, 0, 0.75, 0)
+    box(g, w * 0.22, 0.75, d * 0.6, M.light, -w * 0.33, 1.0, 0)
+    cyl(g, 0.22, 0.3, M.steel, -w * 0.17, 1.35, 0, 'x', 20)
+    box(g, w * 0.12, 0.45, d * 0.4, M.light, w * 0.33, 1.0, 0)
+    cyl(g, 0.05, w * 0.45, M.steel, 0.05, 1.35, 0, 'x', 10)
+  },
+  /* Prensa o troquel: marco alto con ariete. */
+  press(g, w, d) {
+    box(g, w * 0.8, 0.6, d * 0.8, M.dark, 0, 0, 0)
+    for (const s of [-1, 1]) box(g, 0.35, 2.6, d * 0.5, M.black, s * w * 0.3, 0.6, 0)
+    box(g, w * 0.8, 0.6, d * 0.6, M.dark, 0, 3.2, 0)
+    box(g, w * 0.4, 0.5, d * 0.4, M.steel, 0, 2.2, 0)
+    box(g, w * 0.5, 0.15, d * 0.5, M.light, 0, 0.6, 0)
+  },
+  /* Celda de soldadura: mesa, cortinas y equipo. */
+  welding(g, w, d) {
+    box(g, w * 0.5, 0.85, d * 0.4, M.steel, 0, 0, 0)
+    for (const [x, z, cw, cd] of [[0, -d / 2 + 0.1, w * 0.9, 0.05], [-w / 2 + 0.1, 0, 0.05, d * 0.85], [w / 2 - 0.1, 0, 0.05, d * 0.85]]) box(g, cw, 1.9, cd, M.card, x, 0.2, z)
+    box(g, 0.6, 0.8, 0.5, M.dark, w * 0.3, 0, -d * 0.25)
+    cyl(g, 0.07, 1.8, M.black, -w * 0.3, 0, -d * 0.3, 'y', 10)
+    box(g, 1.2, 0.08, 0.08, M.black, -w * 0.3 + 0.6, 1.8, -d * 0.3)
+  },
+  /* Horno: cuerpo grande con chimenea. */
+  oven(g, w, d) {
+    box(g, w * 0.7, 1.9, d * 0.85, M.mid, 0, 0, 0)
+    box(g, w * 0.4, 1.1, 0.05, M.black, 0, 0.3, d * 0.425 + 0.03)
+    cyl(g, 0.3, 2.2, M.dark, w * 0.2, 1.9, -d * 0.2, 'y', 16)
+    for (const side of [-1, 1]) box(g, w * 0.15, 0.7, d * 0.5, M.dark, side * w * 0.42, 0, 0)
+  },
+  /* Secado: túnel con ventiladores arriba. */
+  dryer(g, w, d) {
+    builders.tunnel(g, w, d)
+    for (let i = 0; i < 2; i++) cyl(g, 0.35, 0.12, M.black, -w * 0.12 + i * w * 0.24, 1.32, -d * 0.15, 'y', 18)
+  },
+  /* Ensamble: banco con un marco para herramientas colgadas. */
+  assembly(g, w, d) {
+    builders.workbench(g, w, d)
+    for (const s of [-1, 1]) box(g, 0.08, 2.2, 0.08, M.black, s * (w / 2 - 0.15), 0, -d / 2 + 0.15)
+    box(g, w - 0.2, 0.08, 0.08, M.black, 0, 2.2, -d / 2 + 0.15)
+    for (let i = 0; i < 4; i++) box(g, 0.08, 0.4, 0.08, M.steel, -w / 2 + 0.7 + i * ((w - 1.4) / 3), 1.75, -d / 2 + 0.15)
+  },
+  /* Costura: filas de mesas pequeñas con máquina. */
+  sewing(g, w, d) {
+    const cols = Math.max(1, Math.floor(w / 1.6))
+    const rows = Math.max(1, Math.floor(d / 1.6))
+    for (let i = 0; i < cols; i++)
+      for (let j = 0; j < rows; j++) {
+        const x = -w / 2 + (i + 0.5) * (w / cols)
+        const z = -d / 2 + (j + 0.5) * (d / rows)
+        box(g, 1.1, 0.75, 0.6, M.light, x, 0, z)
+        box(g, 0.4, 0.3, 0.2, M.dark, x - 0.2, 0.75, z)
+        cyl(g, 0.18, 0.45, M.black, x, 0, z + 0.55, 'y', 10)
+      }
+  },
+  /* Mezcla o tanques: cilindros verticales con tubería. */
+  tanks(g, w, d) {
+    const n = w >= 3.5 ? 2 : 1
+    for (let i = 0; i < n; i++) {
+      const x = n === 1 ? 0 : (i - 0.5) * w * 0.5
+      const r = Math.min(w / (2 * n), d / 2) * 0.75
+      for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(g, 0.08, 0.6, 0.08, M.black, x + lx * r * 0.6, 0, lz * r * 0.6)
+      cyl(g, r, 1.8, M.white, x, 0.6, 0, 'y', 28)
+      cyl(g, r * 0.6, 0.2, M.dark, x, 2.4, 0, 'y', 20)
+    }
+    box(g, w * 0.8, 0.12, 0.12, M.steel, 0, 2.0, d * 0.35)
+  },
+  /* Banda transportadora. */
+  conveyor(g, w, d) {
+    const n = Math.max(2, Math.round(w / 1.6))
+    for (let i = 0; i <= n; i++) for (const s of [-1, 1]) box(g, 0.08, 0.75, 0.08, M.black, -w / 2 + 0.2 + i * ((w - 0.4) / n), 0, s * (d * 0.4 - 0.04))
+    box(g, w, 0.12, d * 0.8, M.dark, 0, 0.75, 0)
+    box(g, w, 0.02, d * 0.7, M.black, 0, 0.87, 0)
+    for (let i = 0; i < 3; i++) crate(g, 0.55, 0.3, d * 0.5, -w * 0.3 + i * w * 0.3, 0.89, 0, i % 2 ? M.light : M.card)
+  },
+  /* Grúa o polipasto como estación propia. */
+  hoistStation(g, w, d) {
+    box(g, w * 0.6, 0.05, d * 0.6, M.mid, 0, 0, 0)
+    const h = makeHoist()
+    h.position.set(-w * 0.25, 0, 0)
+    g.add(h)
+    g.userData.arm = h.userData.arm
+  },
+  /* Inspección: mesa con lámpara. */
+  inspection(g, w, d) {
+    for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(g, 0.08, 0.85, 0.08, M.black, lx * (w / 2 - 0.15), 0, lz * (d / 2 - 0.15))
+    box(g, w, 0.06, d, M.white, 0, 0.85, 0)
+    crate(g, w * 0.3, 0.2, d * 0.35, -w * 0.15, 0.91, 0, M.card)
+    cyl(g, 0.04, 1.1, M.black, w * 0.3, 0.91, -d * 0.3, 'y', 8)
+    box(g, 0.5, 0.08, 0.25, M.dark, w * 0.2, 2.0, -d * 0.3)
+  },
+  /* Almacén en piso: tarimas en filas. */
+  floor(g, w, d) {
+    zoneFloor(g, w, d)
+    const cols = Math.max(1, Math.floor(w / 1.6))
+    const rows = Math.max(1, Math.floor(d / 1.4))
+    for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) if ((i + j) % 5 !== 4) pallet(g, -w / 2 + (i + 0.5) * (w / cols), -d / 2 + (j + 0.5) * (d / rows), 1 + ((i + j) % 3))
+  },
+  /* Comedor: mesas redondas con sillas. */
+  canteen(g, w, d) {
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), M.white)
+    floor.rotation.x = -Math.PI / 2
+    floor.position.y = 0.03
+    g.add(floor)
+    const n = Math.max(1, Math.floor(w / 2.6))
+    for (let i = 0; i < n; i++) {
+      const x = -w / 2 + (i + 0.5) * (w / n)
+      cyl(g, 0.6, 0.75, M.light, x, 0, 0, 'y', 24)
+      for (let k = 0; k < 4; k++) cyl(g, 0.2, 0.45, M.black, x + Math.cos(k * 1.57) * 0.95, 0, Math.sin(k * 1.57) * 0.95, 'y', 10)
+    }
+  },
+  /* Zona bloqueada: piso rayado con barrera. */
+  blocked(g, w, d) {
+    zoneFloor(g, w, d)
+    for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) cyl(g, 0.08, 1.0, M.black, (x * w) / 2, 0, (z * d) / 2, 'y', 10)
+    for (const [cw, cd, x, z] of [[w, 0.06, 0, -d / 2], [w, 0.06, 0, d / 2], [0.06, d, -w / 2, 0], [0.06, d, w / 2, 0]]) box(g, cw, 0.06, cd, M.dark, x, 0.9, z)
+  },
 }
 
-/* Los tipos de la planta se pueden escribir con nombres de cualquier industria. */
-const ALIAS = { rack: 'storage', table: 'gantry', bench: 'workbench', polisher: 'line', booth: 'cabin', washer: 'tunnel', pack: 'packing', zone: 'dispatch' }
+/* De cada tipo del catálogo a su maqueta. Los nombres viejos siguen funcionando. */
+const MODEL = {
+  recepcion: 'receiving', despacho: 'dispatch', almacen: 'storage', almacen_piso: 'floor', corte: 'gantry', sierra: 'saw',
+  cnc: 'cnc', torno: 'lathe', prensa: 'press', soldadura: 'welding', pulido: 'line', pintura: 'cabin', horno: 'oven',
+  lavado: 'tunnel', secado: 'dryer', mesa: 'workbench', ensamble: 'assembly', costura: 'sewing', mezcla: 'tanks',
+  banda: 'conveyor', grua: 'hoistStation', inspeccion: 'inspection', empaque: 'packing', otro: 'generic',
+  oficina: 'office', banos: 'restroom', comedor: 'canteen', bloqueado: 'blocked',
+  rack: 'storage', table: 'gantry', bench: 'workbench', polisher: 'line', booth: 'cabin', washer: 'tunnel', pack: 'packing', zone: 'dispatch',
+}
+
+/* Altura aproximada de cada maqueta, para poner la etiqueta encima. */
+export const TALL = { pintura: 2.9, horno: 3.2, prensa: 3.8, grua: 4.3, cnc: 2.8, mezcla: 2.7, oficina: 2.4, banos: 2.3 }
 
 export function makeMachine(kind, w, d, opts = {}) {
   const g = new THREE.Group()
-  let k = ALIAS[kind] || kind
-  if (kind === 'zone' && opts.id === 'recepcion') k = 'receiving'
-  ;(builders[k] || builders.workbench)(g, w, d, opts)
+  ;(builders[MODEL[kind] || kind] || builders.generic)(g, w, d, opts)
   return g
 }
 

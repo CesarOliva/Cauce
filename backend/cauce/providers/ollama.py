@@ -9,9 +9,10 @@ import httpx
 class OllamaProvider:
     name = "ollama"
 
-    def __init__(self, model: str, host: str = "http://localhost:11434"):
+    def __init__(self, model: str, host: str = "http://localhost:11434", temperature: float = 0.3):
         self.model = model
         self.host = host.rstrip("/")
+        self.temperature = temperature
 
     async def status(self) -> dict:
         try:
@@ -28,16 +29,16 @@ class OllamaProvider:
             "model": self.model,
             "stream": False,
             "format": schema or "json",
-            "options": {"temperature": 0.2},
+            "options": {"temperature": self.temperature, "num_predict": 900},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         }
-        async with httpx.AsyncClient(timeout=120) as c:
+        async with httpx.AsyncClient(timeout=180) as c:
             r = await c.post(f"{self.host}/api/chat", json=body)
             r.raise_for_status()
             return json.loads(r.json()["message"]["content"])
 
     async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
-        body = {"model": self.model, "stream": True, "options": {"temperature": 0.5}, "messages": messages}
+        body = {"model": self.model, "stream": True, "options": {"temperature": self.temperature}, "messages": messages}
         async with httpx.AsyncClient(timeout=None) as c:
             async with c.stream("POST", f"{self.host}/api/chat", json=body) as r:
                 r.raise_for_status()

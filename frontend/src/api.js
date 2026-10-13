@@ -1,19 +1,29 @@
-async function post(path, body) {
+async function post(path, body, signal) {
   const r = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   })
   if (!r.ok) throw new Error(`${path} respondió ${r.status}`)
   return r.json()
 }
 
+const get = (path) =>
+  fetch(path).then((r) => {
+    if (!r.ok) throw new Error(`${path} respondió ${r.status}`)
+    return r.json()
+  })
+
 export const api = {
-  health: () => fetch('/api/health').then((r) => r.json()),
+  health: () => get('/api/health'),
+  catalog: () => get('/api/catalog'),
+  example: () => get('/api/example'),
   story: (text) => post('/api/story', { text }),
+  routes: (plant, positions, signal) => post('/api/routes', { plant, positions }, signal),
+  evaluate: (plant, positions, rebalance = true, signal) => post('/api/evaluate', { plant, positions, rebalance }, signal),
   analyze: (plant) => post('/api/analyze', { plant }),
-  evaluate: (plant, positions, receive_gate, dispatch_gate) => post('/api/evaluate', { plant, positions, receive_gate, dispatch_gate }),
-  missions: (analysis) => post('/api/missions', { analysis }),
+  missions: (context) => post('/api/missions', context),
 }
 
 /* Lee una respuesta en streaming y entrega cada fragmento de texto. */
@@ -34,18 +44,6 @@ export async function stream(path, body, onToken, signal) {
   }
 }
 
-/* Recorrido diario del material para un layout, igual que el motor en Python. */
-export function glassMeters(plant, positions) {
-  const p = plant.params
-  let total = 0
-  for (const e of plant.routing) {
-    const a = positions[e.from]
-    const b = positions[e.to]
-    if (!a || !b) continue
-    const trips = (p.demand * e.frac * e.per) / (e.batch || p.batch)
-    total += trips * (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]))
-  }
-  return total
-}
+export const fmt = (n, d = 0) => (n == null || Number.isNaN(Number(n)) ? '—' : Number(n).toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d }))
 
-export const fmt = (n, d = 0) => Number(n).toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d })
+export const pct = (a, b) => (a ? Math.round(((b - a) / a) * 100) : 0)

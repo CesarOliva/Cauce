@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { M, box, makeCart, makeHoist, makeMachine, makeOperator, makeTree, makeTruck } from './models'
+import { M, TALL, box, makeCart, makeMachine, makeOperator, makeTree, makeTruck } from './models'
 
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
 const easeOut = (t) => 1 - Math.pow(1 - t, 4)
@@ -141,33 +141,25 @@ export default class PlantScene {
     this.root.add(this.walls)
     this.buildWalls(opts)
 
-    this.hoist = null
-    const firstStore = plant.stations.find((q) => ['rack', 'storage'].includes(q.kind))
+    this.arms = []
     for (const s of plant.stations) {
       const g = new THREE.Group()
-      const model = makeMachine(s.kind, s.w, s.d, { id: s.id, sorted: opts.staging === 'sorted' })
+      const model = makeMachine(s.kind, s.w, s.d, { id: s.id, sorted: true })
       g.add(model)
-      g.userData = { id: s.id, name: s.name, model, h: ['booth', 'cabin'].includes(s.kind) ? 2.9 : 1.9 }
-      if (s === firstStore && opts.hoist !== false && opts.pulpo !== false) {
-        const crane = makeHoist()
-        crane.position.set(s.w / 2 + 0.6, 0, -s.d / 2 + 0.4)
-        crane.rotation.y = Math.PI * 0.9
-        g.add(crane)
-        g.userData.crane = crane
-        this.hoist = crane
-      }
-      const p = positions[s.id]
+      g.userData = { id: s.id, name: s.name, model, h: TALL[s.kind] ?? 1.9 }
+      if (model.userData.arm) this.arms.push(model.userData.arm)
+      const p = positions[s.id] || [this.W / 2, this.D / 2, 0]
       g.position.set(p[0], 0, p[1])
-      g.rotation.y = THREE.MathUtils.degToRad(p[2] || 0)
+      g.rotation.y = -THREE.MathUtils.degToRad(p[2] || 0)
       g.traverse((o) => (o.userData.pick = s.id))
       this.root.add(g)
       this.stations.set(s.id, g)
       this.addLabel(s.id, s.name)
     }
-    for (const f of plant.fixed) {
+    for (const f of plant.zones || []) {
       const g = makeMachine(f.kind, f.w, f.d)
       g.position.set(f.x, 0, f.z)
-      g.userData = { id: f.id, name: f.name, h: 2.4 }
+      g.userData = { id: f.id, name: f.name, h: TALL[f.kind] ?? 1.4 }
       g.traverse((o) => (o.userData.pick = f.id))
       this.root.add(g)
       this.stations.set(f.id, g)
@@ -204,7 +196,6 @@ export default class PlantScene {
     floor.receiveShadow = true
     this.root.add(floor)
 
-    for (const x of [9.5, 17.5, 26, 34]) for (const z of [7.5, 14.5]) box(this.root, 0.4, 3, 0.4, M.dark, x, 0, z)
 
     const trees = [[-5, 3], [-6, 12], [-4, 20], [W + 5, 4], [W + 6, 14], [6, -5], [18, -6], [30, -5], [41, -6], [-14, D + 18], [W / 2, D + 19], [W + 12, D + 18]]
     for (const [x, z] of trees) {
@@ -224,7 +215,7 @@ export default class PlantScene {
     box(this.walls, W + t, h, t, mat, W / 2, 0, -t / 2)
     box(this.walls, t, h, D, mat, -t / 2, 0, D / 2)
     box(this.walls, t, h, D, mat, W + t / 2, 0, D / 2)
-    const open = (opts.gates || ['A', 'B']).map((id) => this.plant.gates.find((g) => g.id === id)).filter(Boolean)
+    const open = opts.gates ? opts.gates.map((id) => this.plant.gates.find((g) => g.id === id)).filter(Boolean) : this.plant.gates
     const cuts = open.map((g) => [g.x - 2.2, g.x + 2.2]).sort((a, b) => a[0] - b[0])
     let x = 0
     for (const [a, b] of cuts) {
@@ -238,10 +229,12 @@ export default class PlantScene {
       stripe.position.set(g.x, 0.03, D + 0.6)
       this.walls.add(stripe)
     }
-    for (const id of opts.blocked || []) {
-      const g = this.plant.gates.find((q) => q.id === id)
-      if (!g) continue
-      for (let i = 0; i < 6; i++) box(this.walls, 0.7 + (i % 3) * 0.3, 0.4 + (i % 2) * 0.5, 0.7, i % 2 ? M.card : M.mid, g.x - 1.8 + i * 0.7, 0, D - 0.9 - (i % 2) * 0.6)
+    for (const w of this.plant.walls || []) {
+      const len = Math.hypot(w.x2 - w.x1, w.z2 - w.z1)
+      if (len < 0.1) continue
+      const m = box(this.walls, len + 0.3, h, 0.3, mat, 0, 0, 0)
+      m.position.set((w.x1 + w.x2) / 2, h / 2, (w.z1 + w.z2) / 2)
+      m.rotation.y = -Math.atan2(w.z2 - w.z1, w.x2 - w.x1)
     }
   }
 
@@ -276,8 +269,8 @@ export default class PlantScene {
     this.operators = []
 
     const gx = (id) => this.plant.gates.find((g) => g.id === id)?.x ?? this.W / 2
-    const dispatchX = gx(o.dispatchGate || 'A')
-    const receiveX = gx(o.receiveGate || 'A')
+    const dispatchX = gx(o.dispatchGate || this.plant.dispatch_gate)
+    const receiveX = gx(o.receiveGate || this.plant.receive_gate)
     const trucks = o.trucks ?? 2
     for (let i = 0; i < trucks; i++) {
       const tr = makeTruck(i === 0 ? 'flat' : 'box')
@@ -365,14 +358,16 @@ export default class PlantScene {
     this.flow.clear()
     this.particles = []
     const p = this.plant.params
-    this.plant.routing.forEach((e, i) => {
+    const use = this.plant.use_assumptions
+    this.plant.routes.forEach((e, i) => {
       const a = positions[e.from]
       const b = positions[e.to]
       if (!a || !b) return
-      const trips = (p.demand * e.frac * e.per) / (e.batch || p.batch)
+      const frac = e.frac ?? 1
+      const trips = use ? ((p.demand || 0) * frac) / (p.batch || 1) : frac * 20
       const width = 0.14 + Math.min(trips, 25) * 0.012
-      const pts = this.pathPoints(a, b, i, legs?.find((l) => l.from === e.from && l.to === e.to))
-      const dashed = e.frac < 1
+      const pts = this.pathPoints(a, b, i, legs?.find((l) => l.id === e.id))
+      const dashed = frac < 1
       const segs = []
       let total = 0
       for (let k = 0; k < pts.length - 1; k++) {
@@ -397,6 +392,16 @@ export default class PlantScene {
           }
           this.flow.add(m)
         }
+      }
+      const half = total / 2
+      const seg = segs.find((q) => half >= q.start && half <= q.start + q.len) || segs[segs.length - 1]
+      if (seg && seg.len > 0.01) {
+        const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.3, 3), M.black)
+        arrow.position.copy(seg.a.clone().lerp(seg.b, (half - seg.start) / seg.len))
+        arrow.position.y = 0.12
+        const dir = seg.b.clone().sub(seg.a).normalize()
+        arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
+        this.flow.add(arrow)
       }
       for (const pt of [pts[0], pts[pts.length - 1]]) {
         const dot = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.05, 18), M.black)
@@ -423,7 +428,7 @@ export default class PlantScene {
       const fromRot = g.rotation.y
       const p = positions[id]
       const to = new THREE.Vector3(p[0], 0, p[1])
-      const toRot = THREE.MathUtils.degToRad(p[2] || 0)
+      const toRot = -THREE.MathUtils.degToRad(p[2] || 0)
       const moved = from.distanceTo(to) > 0.05 || Math.abs(fromRot - toRot) > 0.01
       if (!animate || !moved) {
         g.position.copy(to)
@@ -484,7 +489,7 @@ export default class PlantScene {
       const distW = (this.W / 2 + 3) / (Math.tan(fov / 2) * this.camera.aspect)
       pos = new THREE.Vector3(0, Math.max(distH, distW), 2.6)
     } else {
-      pos = new THREE.Vector3(26, 38, 46)
+      pos = new THREE.Vector3(this.W * 0.55, Math.max(this.W, this.D * 1.8) * 0.85, this.D * 1.4 + 16)
     }
     this.moveCamera(pos, target)
     this.controls.enableRotate = view !== 'top'
@@ -567,8 +572,7 @@ export default class PlantScene {
       }
     }
 
-    const crane = this.hoist
-    if (crane) crane.userData.arm.rotation.y = Math.sin(time * 0.4) * 0.6
+    for (const arm of this.arms || []) arm.rotation.y = Math.sin(time * 0.4) * 0.6
 
     for (const tr of this.extras.children) if (tr.userData.baseZ) tr.position.y = Math.sin(time * 1.3) * 0.015
 

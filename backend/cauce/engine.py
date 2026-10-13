@@ -1,12 +1,13 @@
 """Motor de ingeniería de procesos.
 
-Todo es determinista y trazable: la IA narra y conversa, pero los números
-salen de estas fórmulas.
+Todo es determinista y trazable: la IA lee la historia y conversa, pero los
+números salen de estas fórmulas.
 
-- Recorridos: distancia rectilínea entre estaciones (pasillos en ángulo recto).
-- Capacidad: minutos disponibles por operario frente a la carga de cada estación.
-- Espera en cola: aproximación de Sakasegawa (G/G/c).
-- Rediseño: asignación exacta de estaciones a posiciones por ramificación y poda.
+- Recorridos: ruta más corta por pasillos en una malla de 0,5 m que esquiva
+  máquinas, zonas bloqueadas (oficina, baños...) y paredes en cualquier ángulo.
+- Sin supuestos: solo metros que recorre una pieza y relaciones entre áreas.
+- Con supuestos: viajes al día, carga y capacidad por estación, cuello de
+  botella, tiempo de fabricación (colas con Sakasegawa) y carga de camiones.
 """
 
 from __future__ import annotations
@@ -15,81 +16,95 @@ import heapq
 import math
 from functools import lru_cache
 
-ALTERNATIVES = [
-    {
-        "id": "u",
-        "name": "Flujo en U",
-        "summary": "Entra por un portón nuevo a la izquierda, rodea la bodega por el fondo y sale por el portón B.",
-        "receive_gate": "C",
-        "dispatch_gate": "B",
-        "works": "Abrir el portón C (obra menor).",
-        "works_cost": 1,
-        "recepcion": [5, 18.5, 0],
-        "despacho": [38, 18.5, 0],
-        "slots": [[5, 11, 0], [5, 4, 0], [13.5, 4, 0], [21.5, 4, 0], [30, 4, 0], [38, 4, 0], [38, 11, 0], [30, 11, 0]],
-    },
-    {
-        "id": "i",
-        "name": "Línea recta",
-        "summary": "Todas las máquinas en fila por el centro, de pared a pared.",
-        "receive_gate": "C",
-        "dispatch_gate": "B",
-        "works": "Abrir el portón C y partir la bodega con la línea.",
-        "works_cost": 2,
-        "recepcion": [5, 18.5, 0],
-        "despacho": [38, 18.5, 0],
-        "slots": [[3.5, 11, 90], [10, 11, 90], [16.5, 11, 90], [23, 11, 90], [29.5, 11, 90], [36, 11, 90], [42, 11, 90]],
-    },
-    {
-        "id": "keep",
-        "name": "Reordenar sin obra",
-        "summary": "Se despeja el portón B y se reordenan las máquinas sin abrir portones nuevos.",
-        "receive_gate": "A",
-        "dispatch_gate": "B",
-        "works": "Despejar el portón B.",
-        "works_cost": 0,
-        "recepcion": [30.5, 18.5, 0],
-        "despacho": [38, 18.5, 0],
-        "slots": [[30, 11, 0], [21.5, 11, 0], [13.5, 11, 0], [5, 11, 0], [5, 4, 0], [13.5, 4, 0], [21.5, 4, 0], [30, 4, 0], [38, 4, 0], [38, 11, 0]],
-    },
-]
+from .catalog import CLEAN, DEFAULT_PARAMS, DIRTY
 
-ROUTE_ORDER = ["laminas", "corte", "recorte", "pulido", "sandblast", "lavado", "empaque"]
-
-
-def manhattan(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
-
-
-# Enrutamiento por pasillos: el vidrio no atraviesa máquinas, oficina ni baños.
 STEP = 0.5      # resolución de la malla (m)
 MARGIN = 0.25   # holgura alrededor de cada obstáculo (m)
 TURN = 1.0      # castigo por giro (m): prefiere pasillos rectos
+WALL_T = 0.3    # grosor de las paredes interiores (m)
 
 
-def obstacles(plant, positions, skip):
+# ---------- Geometría ----------
+
+def station_map(plant):
+    return {s["id"]: s for s in plant["stations"]}
+
+
+def dims(st, rot):
+    return (st["d"], st["w"]) if round(rot or 0) % 180 else (st["w"], st["d"])
+
+
+def rect_at(st, pos):
+    x, z, *r = pos
+    w, d = dims(st, r[0] if r else 0)
+    return (x - w / 2, z - d / 2, x + w / 2, z + d / 2)
+
+
+def zone_rect(zn):
+    return (zn["x"] - zn["w"] / 2, zn["z"] - zn["d"] / 2, zn["x"] + zn["w"] / 2, zn["z"] + zn["d"] / 2)
+
+
+def rect_gap(a, b):
+    """Distancia entre dos rectángulos (0 si se tocan o se cruzan)."""
+    dx = max(0.0, max(a[0], b[0]) - min(a[2], b[2]))
+    dz = max(0.0, max(a[1], b[1]) - min(a[3], b[3]))
+    return math.hypot(dx, dz)
+
+
+def seg_dist(px, pz, x1, z1, x2, z2):
+    vx, vz = x2 - x1, z2 - z1
+    L = vx * vx + vz * vz
+    t = 0.0 if L == 0 else max(0.0, min(1.0, ((px - x1) * vx + (pz - z1) * vz) / L))
+    return math.hypot(px - (x1 + t * vx), pz - (z1 + t * vz))
+
+
+def obstacles(plant, positions, skip=()):
+    st = station_map(plant)
     rects = []
-    for s in plant["stations"]:
-        if s["id"] in skip or s["id"] not in positions:
+    for sid, pos in positions.items():
+        if sid in skip or sid not in st:
             continue
-        x, y, *r = positions[s["id"]]
-        rot = r[0] if r else 0
-        w, d = (s["d"], s["w"]) if rot % 180 else (s["w"], s["d"])
-        rects.append((x - w / 2, y - d / 2, x + w / 2, y + d / 2))
-    for f in plant["fixed"]:
-        rects.append((f["x"] - f["w"] / 2, f["z"] - f["d"] / 2, f["x"] + f["w"] / 2, f["z"] + f["d"] / 2))
-    return tuple(rects)
+        rects.append(tuple(round(v, 2) for v in rect_at(st[sid], pos)))
+    for zn in plant.get("zones", []):
+        rects.append(tuple(round(v, 2) for v in zone_rect(zn)))
+    segs = tuple((w["x1"], w["z1"], w["x2"], w["z2"]) for w in plant.get("walls", []))
+    return tuple(rects), segs
 
 
-@lru_cache(maxsize=8192)
-def _route(W, D, rects, a, b):
+# ---------- Enrutamiento por pasillos ----------
+
+def _crosses(n1, n2, s):
+    """¿El paso entre dos nodos vecinos cruza la pared s?"""
+    ax, az, bx, bz = n1[0] * STEP, n1[1] * STEP, n2[0] * STEP, n2[1] * STEP
+    x1, z1, x2, z2 = s
+
+    def orient(px, pz, qx, qz, rx, rz):
+        v = (qx - px) * (rz - pz) - (qz - pz) * (rx - px)
+        return 0 if abs(v) < 1e-9 else (1 if v > 0 else -1)
+
+    o1, o2 = orient(ax, az, bx, bz, x1, z1), orient(ax, az, bx, bz, x2, z2)
+    o3, o4 = orient(x1, z1, x2, z2, ax, az), orient(x1, z1, x2, z2, bx, bz)
+    return o1 != o2 and o3 != o4
+
+
+@lru_cache(maxsize=16384)
+def _route(W, D, rects, segs, a, b):
     nx, ny = int(W / STEP), int(D / STEP)
     blocked = set()
     for x0, y0, x1, y1 in rects:
         for i in range(max(0, math.ceil((x0 - MARGIN) / STEP + 1e-9)), min(nx, math.floor((x1 + MARGIN) / STEP - 1e-9)) + 1):
             for j in range(max(0, math.ceil((y0 - MARGIN) / STEP + 1e-9)), min(ny, math.floor((y1 + MARGIN) / STEP - 1e-9)) + 1):
                 blocked.add((i, j))
-    clip = lambda v, n: max(0, min(n, round(v / STEP)))
+    r = WALL_T / 2 + MARGIN
+    for x1, z1, x2, z2 in segs:
+        for i in range(max(0, math.floor((min(x1, x2) - r) / STEP)), min(nx, math.ceil((max(x1, x2) + r) / STEP)) + 1):
+            for j in range(max(0, math.floor((min(z1, z2) - r) / STEP)), min(ny, math.ceil((max(z1, z2) + r) / STEP)) + 1):
+                if seg_dist(i * STEP, j * STEP, x1, z1, x2, z2) <= r:
+                    blocked.add((i, j))
+
+    def clip(v, n):
+        return max(0, min(n, round(v / STEP)))
+
     start = (clip(a[0], nx), clip(a[1], ny))
     goal = (clip(b[0], nx), clip(b[1], ny))
     dirs = ((1, 0), (-1, 0), (0, 1), (0, -1))
@@ -107,6 +122,9 @@ def _route(W, D, rects, a, b):
         for k, (dx, dy) in enumerate(dirs):
             n = (node[0] + dx, node[1] + dy)
             if not (0 <= n[0] <= nx and 0 <= n[1] <= ny) or (n in blocked and n != goal):
+                continue
+            # Una pared no se cruza ni siquiera saliendo de una máquina.
+            if segs and any(_crosses(node, n, s) for s in segs):
                 continue
             nc = c + STEP + (TURN if d not in (-1, k) else 0.0)
             if nc < best.get((n, k), 1e18):
@@ -127,46 +145,73 @@ def _route(W, D, rects, a, b):
         if (p1[0] - p0[0], p1[1] - p0[1]) != (p2[0] - p1[0], p2[1] - p1[1]):
             pts.append((p1[0] * STEP, p1[1] * STEP))
     pts.append((b[0], b[1]))
-    # El primer y el último tramo salen del centro: se alinean con la malla.
-    fixed = [pts[0]]
+    out = [pts[0]]
     for q in pts[1:]:
-        p = fixed[-1]
+        p = out[-1]
         if p[0] != q[0] and p[1] != q[1]:
-            fixed.append((q[0], p[1]))
-        fixed.append(q)
-    return fixed
+            out.append((q[0], p[1]))
+        out.append(q)
+    return tuple(out)
+
+
+def _path(plant, rects, segs, a, b):
+    pts = _route(plant["size"]["w"], plant["size"]["d"], rects, segs, (a[0], a[1]), (b[0], b[1]))
+    ok = pts is not None
+    if not ok:
+        pts = ((a[0], a[1]), (b[0], a[1]), (b[0], b[1]))
+    dist = sum(abs(q[0] - p[0]) + abs(q[1] - p[1]) for p, q in zip(pts, pts[1:]))
+    return dist, [[round(x, 2), round(y, 2)] for x, y in pts], ok
 
 
 def route_leg(plant, positions, a_id, b_id):
-    """Distancia y trazo (esquinas) del vidrio entre dos estaciones, esquivando obstáculos."""
-    a, b = positions[a_id], positions[b_id]
-    rects = obstacles(plant, positions, {a_id, b_id})
-    pts = _route(plant["size"]["w"], plant["size"]["d"], rects, (a[0], a[1]), (b[0], b[1]))
-    if pts is None:
-        pts = [(a[0], a[1]), (b[0], a[1]), (b[0], b[1])]
-    dist = sum(abs(q[0] - p[0]) + abs(q[1] - p[1]) for p, q in zip(pts, pts[1:]))
-    return dist, [[round(x, 2), round(y, 2)] for x, y in pts]
+    rects, segs = obstacles(plant, positions, {a_id, b_id})
+    return _path(plant, rects, segs, positions[a_id], positions[b_id])
+
+
+def route_to_point(plant, positions, a_id, point):
+    rects, segs = obstacles(plant, positions, {a_id})
+    return _path(plant, rects, segs, positions[a_id], point)
+
+
+def manhattan(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+# ---------- Flujo ----------
+
+def valid_routes(plant, positions):
+    return [r for r in plant.get("routes", []) if r["from"] in positions and r["to"] in positions and r["from"] != r["to"]]
+
+
+def shares(plant):
+    """Fracción de las piezas que pasa por cada estación, según las rutas."""
+    inc = {}
+    for r in plant.get("routes", []):
+        inc[r["to"]] = inc.get(r["to"], 0.0) + float(r.get("frac", 1) or 0)
+    return {s["id"]: min(1.0, inc[s["id"]]) if s["id"] in inc else 1.0 for s in plant["stations"]}
+
+
+def ends(plant):
+    """Estación donde entra el material y estación donde sale."""
+    ids = [s["id"] for s in plant["stations"]]
+    kinds = {s["id"]: s["kind"] for s in plant["stations"]}
+    inc = {r["to"] for r in plant.get("routes", [])}
+    out = {r["from"] for r in plant.get("routes", [])}
+    first = next((i for i in ids if kinds[i] == "recepcion"), None) or next((i for i in ids if i in out and i not in inc), None)
+    last = next((i for i in ids if kinds[i] == "despacho"), None) or next((i for i in reversed(ids) if i in inc and i not in out), None)
+    return first, last
 
 
 def gate_x(plant, gate_id):
-    for g in plant["gates"]:
+    for g in plant.get("gates", []):
         if g["id"] == gate_id:
             return g["x"]
-    return plant["size"]["w"] / 2
+    gates = plant.get("gates", [])
+    return gates[0]["x"] if gates else plant["size"]["w"] / 2
 
 
-def edges_with_trips(plant):
-    p = plant["params"]
-    out = []
-    for e in plant["routing"]:
-        batch = e["batch"] or p["batch"]
-        units = p["demand"] * e["frac"] * e["per"]
-        out.append({**e, "units": units, "trips": units / batch, "by": e["by"] or e["from"]})
-    return out
-
-
-def station_map(plant):
-    return {s["id"]: s for s in plant["stations"]}
+def params(plant):
+    return {**DEFAULT_PARAMS, **(plant.get("params") or {})}
 
 
 def sakasegawa_wq(rho, c, te, cv2):
@@ -177,275 +222,163 @@ def sakasegawa_wq(rho, c, te, cv2):
     return (cv2 + cv2) / 2 * (r ** (math.sqrt(2 * (c + 1)) - 1)) / (c * (1 - r)) * te
 
 
-def evaluate(plant, positions, ops=None, receive_gate=None, dispatch_gate=None, staging="mixed"):
-    """Calcula todas las métricas de un layout."""
-    p = plant["params"]
+def avoid_hits(plant, positions):
+    """Áreas sucias (polvo, ruido, calor) a menos de 4 m de áreas limpias."""
     st = station_map(plant)
-    ops = ops or {s["id"]: s["ops"] for s in plant["stations"]}
-    avail = p["shift_min"] * p["efficiency"]
-    edges = edges_with_trips(plant)
-    depth = plant["size"]["d"]
+    items = [(sid, st[sid]["name"], st[sid]["kind"], rect_at(st[sid], p)) for sid, p in positions.items() if sid in st]
+    items += [(z["id"], z["name"], z["kind"], zone_rect(z)) for z in plant.get("zones", [])]
+    hits = []
+    for a in items:
+        if a[2] not in DIRTY:
+            continue
+        for b in items:
+            if b[2] in CLEAN and rect_gap(a[3], b[3]) < 4:
+                hits.append({"a": a[0], "b": b[0], "text": f"{a[1]} queda junto a {b[1]}"})
+    return hits
 
+
+def evaluate(plant, positions, ops=None):
+    """Métricas de un layout. Sin supuestos solo calcula recorridos."""
+    st = station_map(plant)
     legs = []
+    piece_m = 0.0
+    for r in valid_routes(plant, positions):
+        d, path, ok = route_leg(plant, positions, r["from"], r["to"])
+        frac = float(r.get("frac", 1) or 0)
+        piece_m += frac * d
+        legs.append({"id": r["id"], "from": r["from"], "to": r["to"], "frac": frac, "dist": round(d, 1), "path": path, "ok": ok, "meters": round(frac * d, 1)})
+
+    out = {
+        "legs": legs,
+        "piece_m": round(piece_m, 1),
+        "avoid_hits": avoid_hits(plant, positions),
+        "blocked_legs": sum(1 for x in legs if not x["ok"]),
+        "use_assumptions": bool(plant.get("use_assumptions")),
+    }
+    if not plant.get("use_assumptions") or not plant["stations"]:
+        return out
+
+    p = params(plant)
+    ops = ops or {s["id"]: int(s.get("ops", 0) or 0) for s in plant["stations"]}
+    avail = p["shift_min"] * p["efficiency"]
+    share = shares(plant)
+    demand = max(float(p["demand"]), 1e-6)
     handling = {sid: 0.0 for sid in st}
-    glass_m = 0.0
-    walk_m = 0.0
-    for e in edges:
-        d, path = route_leg(plant, positions, e["from"], e["to"])
-        glass_m += e["trips"] * d
-        walk_m += e["trips"] * 2 * d
-        handling[e["by"]] += e["trips"] * 2 * d / p["speed"]
-        legs.append({"from": e["from"], "to": e["to"], "dist": round(d, 1), "trips": round(e["trips"], 1), "meters": round(e["trips"] * d, 1), "path": path})
+    daily_m = 0.0
+    for leg in legs:
+        trips = demand * leg["frac"] / p["batch"]
+        leg["trips"] = round(trips, 1)
+        leg["meters"] = round(trips * leg["dist"], 1)
+        daily_m += trips * leg["dist"]
+        handling[leg["from"]] += trips * 2 * leg["dist"] / p["speed"]
 
     stations = []
     for s in plant["stations"]:
         sid = s["id"]
-        load = p["demand"] * s["share"] * s["t"] + handling[sid]
+        t = float(s.get("t", 0) or 0)
+        load = demand * share[sid] * t + handling[sid]
         n = ops.get(sid, 0)
-        if s["t"] == 0 and n == 0:
+        servers = n if n > 0 else (1 if t > 0 else 0)
+        if servers == 0 or load <= 0:
             continue
-        util = load / (n * avail) if n else float("inf")
-        per_piece = load / p["demand"]
-        cap = n * avail / per_piece if per_piece > 0 else float("inf")
+        util = load / (servers * avail)
         stations.append({
-            "id": sid, "name": s["name"], "ops": n,
+            "id": sid, "name": s["name"], "ops": n, "auto": n == 0,
             "load_min": round(load, 1), "handling_min": round(handling[sid], 1),
-            "util": round(util, 4), "required": round(load / avail, 2), "capacity": round(cap, 1),
+            "util": round(util, 4), "required": round(load / avail, 2), "capacity": round(servers * avail / (load / demand), 1),
         })
     stations.sort(key=lambda x: -x["util"])
-    bottleneck = stations[0]
-    capacity = min(x["capacity"] for x in stations)
 
-    # Tiempo de fabricación por pieza: proceso + cola + espera de lote + transporte.
-    takt = avail / p["demand"]
-    proc = sum(s["t"] * s["share"] for s in plant["stations"])
+    takt = avail / demand
+    proc = sum(float(s.get("t", 0) or 0) * share[s["id"]] for s in plant["stations"])
     queue = 0.0
-    breakdown_queue = {}
     for x in stations:
-        s = st[x["id"]]
-        te = x["load_min"] / max(p["demand"] * s["share"], 1e-9)
-        wq = sakasegawa_wq(x["util"], x["ops"], te, p["cv2"]) * s["share"]
-        breakdown_queue[x["id"]] = round(wq, 1)
-        queue += wq
-    batch_wait = 0.0
-    transport = 0.0
-    for e, leg in zip(edges, legs):
-        batch = e["batch"] or p["batch"]
-        per_unit_gap = takt / (e["frac"] * e["per"])
-        batch_wait += e["frac"] * (batch - 1) / 2 * per_unit_gap * (1 if e["per"] >= 1 else e["per"])
-        transport += e["frac"] * leg["dist"] / p["speed"]
+        sh = max(share[x["id"]], 1e-9)
+        te = x["load_min"] / (demand * sh)
+        queue += sakasegawa_wq(x["util"], max(x["ops"], 1), te, p["cv2"]) * sh
+    batch_wait = sum((p["batch"] - 1) / 2 * takt * min(1.0, leg["frac"]) for leg in legs)
+    transport = sum(leg["frac"] * leg["dist"] / p["speed"] for leg in legs)
     lead_min = proc + queue + batch_wait + transport
 
-    # Despacho: del área de despacho al camión estacionado frente al portón.
-    gx = gate_x(plant, dispatch_gate or plant["current"]["dispatch_gate"])
-    desp = positions["despacho"]
-    d_truck = manhattan(desp, (gx, depth)) + 3
-    search = p["search_min_sorted"] if staging == "sorted" else p["search_min_mixed"]
-    per_piece_load = p["load_min"] + 2 * d_truck / p["speed"] + search
-    loading = p["trucks"] * p["truck_setup"] + p["demand"] * per_piece_load
-
-    gx_r = gate_x(plant, receive_gate or plant["current"]["receive_gate"])
-    d_receive = manhattan(positions["recepcion"], (gx_r, depth)) + 3
-
-    avoid_hits = []
-    allpos = dict(positions)
-    for f in plant["fixed"]:
-        allpos[f["id"]] = [f["x"], f["z"], 0]
-    for a, b in plant["avoid"]:
-        if a in allpos and b in allpos and manhattan(allpos[a], allpos[b]) < 9:
-            avoid_hits.append([a, b])
-
-    lower = sum(e["trips"] * 7 for e in edges)
-    flow_index = max(0, min(100, round(100 * lower / glass_m))) if glass_m else 100
-
-    return {
-        "glass_m": round(glass_m, 0),
-        "walk_m": round(walk_m, 0),
-        "capacity": round(capacity, 1),
+    out.update({
+        "daily_m": round(daily_m, 0),
         "demand": p["demand"],
         "lead_h": round(lead_min / 60, 2),
-        "lead_parts": {
-            "proceso": round(proc, 1),
-            "cola": round(queue, 1),
-            "lote": round(batch_wait, 1),
-            "transporte": round(transport, 1),
-        },
-        "queue_by_station": breakdown_queue,
-        "loading_min": round(loading, 0),
-        "loading_parts": {
-            "alistamiento": p["trucks"] * p["truck_setup"],
-            "carga": round(p["demand"] * p["load_min"], 1),
-            "caminar": round(p["demand"] * 2 * d_truck / p["speed"], 1),
-            "buscar": round(p["demand"] * search, 1),
-        },
-        "d_truck": round(d_truck, 1),
-        "d_receive": round(d_receive, 1),
+        "lead_parts": {"proceso": round(proc, 1), "cola": round(queue, 1), "lote": round(batch_wait, 1), "transporte": round(transport, 1)},
         "stations": stations,
-        "bottleneck": bottleneck["id"],
-        "bottleneck_util": bottleneck["util"],
-        "legs": legs,
-        "avoid_hits": avoid_hits,
-        "flow_index": flow_index,
         "ops": ops,
-    }
+    })
+    if stations:
+        out.update({"bottleneck": stations[0]["id"], "bottleneck_util": stations[0]["util"], "capacity": round(min(x["capacity"] for x in stations), 1)})
+
+    first, last = ends(plant)
+    D = plant["size"]["d"]
+    if last and last in positions:
+        dt, _, _ = route_to_point(plant, positions, last, (gate_x(plant, plant.get("dispatch_gate")), D))
+        out["d_truck"] = round(dt, 1)
+        out["loading_min"] = round(p["trucks"] * p["truck_setup"] + p["demand"] * (p["load_min"] + 2 * dt / p["speed"]), 0)
+    return out
 
 
-def layout_cost(plant, positions, edges):
-    cost = sum(e["trips"] * manhattan(positions[e["from"]], positions[e["to"]]) for e in edges)
-    allpos = dict(positions)
-    for f in plant["fixed"]:
-        allpos[f["id"]] = [f["x"], f["z"], 0]
-    for a, b in plant["avoid"]:
-        if a in allpos and b in allpos and manhattan(allpos[a], allpos[b]) < 9:
-            cost += 500
-    return cost
-
-
-def optimize_positions(plant, alt):
-    """Asignación óptima de estaciones a posiciones (ramificación y poda)."""
-    edges = edges_with_trips(plant)
-    fixed = {"recepcion": alt["recepcion"], "despacho": alt["despacho"]}
-    slots = alt["slots"]
-    order = [s for s in ROUTE_ORDER if s in station_map(plant)]
-    best = {"cost": float("inf"), "assign": None}
-    adj = {}
-    for e in edges:
-        adj.setdefault(e["from"], []).append(e)
-        adj.setdefault(e["to"], []).append(e)
-
-    def partial(assign, sid):
-        c = 0.0
-        for e in adj.get(sid, []):
-            other = e["to"] if e["from"] == sid else e["from"]
-            if other in assign:
-                c += e["trips"] * manhattan(assign[sid], assign[other])
-        return c
-
-    def dfs(i, assign, used, cost):
-        if cost >= best["cost"]:
-            return
-        if i == len(order):
-            total = layout_cost(plant, assign, edges)
-            if total < best["cost"]:
-                best["cost"] = total
-                best["assign"] = dict(assign)
-            return
-        sid = order[i]
-        for k, slot in enumerate(slots):
-            if k in used:
-                continue
-            assign[sid] = slot
-            dfs(i + 1, assign, used | {k}, cost + partial(assign, sid))
-            del assign[sid]
-
-    dfs(0, dict(fixed), frozenset(), 0.0)
-    return {k: list(v) for k, v in best["assign"].items()}
-
-
-def rebalance_ops(plant, positions, receive_gate, dispatch_gate):
-    """Reparte los operarios de planta para maximizar la capacidad."""
-    p = plant["params"]
-    total = int(p["floor_ops"])
-    working = [s["id"] for s in plant["stations"] if s["t"] > 0]
+def rebalance_ops(plant, positions):
+    """Reparte los mismos operarios para maximizar la capacidad."""
+    total = sum(int(s.get("ops", 0) or 0) for s in plant["stations"])
+    working = [s["id"] for s in plant["stations"] if float(s.get("t", 0) or 0) > 0 and int(s.get("ops", 0) or 0) > 0]
+    if not working or total < len(working):
+        return None
     ops = {s["id"]: 0 for s in plant["stations"]}
     for sid in working:
         ops[sid] = 1
-    remaining = total - len(working)
-    while remaining > 0:
-        m = evaluate(plant, positions, ops, receive_gate, dispatch_gate, "sorted")
-        ops[m["bottleneck"]] += 1
-        remaining -= 1
+    for _ in range(total - len(working)):
+        bn = evaluate(plant, positions, ops).get("bottleneck")
+        if bn not in working:
+            break
+        ops[bn] += 1
     return ops
 
 
-def analyze(plant):
-    cur = plant["current"]
-    current = evaluate(plant, cur["positions"], None, cur["receive_gate"], cur["dispatch_gate"], cur.get("staging", "mixed"))
-    alts = []
-    for alt in ALTERNATIVES:
-        pos = optimize_positions(plant, alt)
-        # Las máquinas giran según la posición asignada.
-        ops = rebalance_ops(plant, pos, alt["receive_gate"], alt["dispatch_gate"])
-        m = evaluate(plant, pos, ops, alt["receive_gate"], alt["dispatch_gate"], "sorted")
-        alts.append({
-            "id": alt["id"], "name": alt["name"], "summary": alt["summary"], "works": alt["works"],
-            "receive_gate": alt["receive_gate"], "dispatch_gate": alt["dispatch_gate"],
-            "positions": pos, "metrics": m, "slots": alt["slots"],
-        })
-
-    # Puntaje: recorrido, capacidad, tiempo y obra necesaria, normalizados contra hoy.
-    def score(a):
-        m = a["metrics"]
-        base = current
-        works = next(x["works_cost"] for x in ALTERNATIVES if x["id"] == a["id"])
-        return (
-            0.35 * m["glass_m"] / base["glass_m"]
-            + 0.25 * base["capacity"] / m["capacity"]
-            + 0.2 * m["lead_h"] / base["lead_h"]
-            + 0.1 * m["loading_min"] / base["loading_min"]
-            + 0.05 * works
-        )
-
-    for a in alts:
-        a["score"] = round(score(a), 3)
-    best = min(alts, key=lambda a: a["score"])
-    ops_moves = []
-    for sid, n in best["metrics"]["ops"].items():
-        before = next((s["ops"] for s in plant["stations"] if s["id"] == sid), 0)
-        if n != before:
-            ops_moves.append({"id": sid, "before": before, "after": n})
-
-    return {
-        "plant": plant,
-        "current": current,
-        "alternatives": alts,
-        "recommended": best["id"],
-        "ops_moves": ops_moves,
-        "relations": relations(plant),
-        "comparison": compare(current, best["metrics"]),
-    }
-
-
-def compare(a, b):
-    def pct(x, y):
-        return round((y - x) / x * 100) if x else 0
-
-    return {
-        "glass_m": {"before": a["glass_m"], "after": b["glass_m"], "pct": pct(a["glass_m"], b["glass_m"])},
-        "capacity": {"before": a["capacity"], "after": b["capacity"], "pct": pct(a["capacity"], b["capacity"])},
-        "lead_h": {"before": a["lead_h"], "after": b["lead_h"], "pct": pct(a["lead_h"], b["lead_h"])},
-        "loading_min": {"before": a["loading_min"], "after": b["loading_min"], "pct": pct(a["loading_min"], b["loading_min"])},
-    }
-
+# ---------- Relaciones entre áreas ----------
 
 def relations(plant):
-    """Tabla de relaciones entre áreas (A, E, I, O, U, X) según intensidad de flujo."""
-    edges = edges_with_trips(plant)
-    ids = [s["id"] for s in plant["stations"]] + [f["id"] for f in plant["fixed"]]
+    """Tabla de relaciones (A, E, I, O, U, X). No depende de supuestos."""
+    zones = [z for z in plant.get("zones", []) if z["kind"] != "bloqueado"]
+    ids = [s["id"] for s in plant["stations"]] + [z["id"] for z in zones]
     names = {s["id"]: s["name"] for s in plant["stations"]}
-    names.update({f["id"]: f["name"] for f in plant["fixed"]})
+    names.update({z["id"]: z["name"] for z in zones})
+    kinds = {s["id"]: s["kind"] for s in plant["stations"]}
+    kinds.update({z["id"]: z["kind"] for z in zones})
     flow = {}
-    for e in edges:
-        k = tuple(sorted([e["from"], e["to"]]))
-        flow[k] = flow.get(k, 0) + e["trips"]
+    for r in plant.get("routes", []):
+        k = tuple(sorted([r["from"], r["to"]]))
+        flow[k] = flow.get(k, 0) + float(r.get("frac", 1) or 0)
     top = max(flow.values()) if flow else 1
-    qualitative = {
-        ("despacho", "oficina"): ("I", "Remisiones y facturas por ruta"),
-        ("oficina", "recepcion"): ("O", "Verificar láminas recibidas"),
-        ("empaque", "sandblast"): ("X", "El polvo ensucia el vidrio empacado"),
-        ("oficina", "sandblast"): ("X", "Ruido y polvo junto a la oficina"),
-    }
     cells = []
     for i, a in enumerate(ids):
         for b in ids[i + 1:]:
             k = tuple(sorted([a, b]))
-            if k in qualitative:
-                r, why = qualitative[k]
+            ka, kb = kinds[a], kinds[b]
+            if (ka in DIRTY and kb in CLEAN) or (kb in DIRTY and ka in CLEAN):
+                dirty = names[a] if ka in DIRTY else names[b]
+                r, why = "X", f"El polvo, ruido o calor de {dirty.lower()} afecta al área"
             elif k in flow:
                 ratio = flow[k] / top
                 r = "A" if ratio >= 0.6 else "E" if ratio >= 0.3 else "I"
-                why = f"{flow[k]:.0f} viajes al día"
+                why = f"El material pasa directo ({round(flow[k] * 100)} % de las piezas)"
+            elif {ka, kb} == {"oficina", "despacho"}:
+                r, why = "I", "Remisiones y facturas de cada salida"
+            elif {ka, kb} == {"oficina", "recepcion"}:
+                r, why = "O", "Verificar lo que llega"
             else:
                 r, why = "U", "Sin relación directa"
             cells.append({"a": a, "b": b, "r": r, "why": why})
     return {"ids": ids, "names": names, "cells": cells}
+
+
+def compare(a, b):
+    out = {}
+    for k in ("piece_m", "daily_m", "capacity", "lead_h", "loading_min"):
+        x, y = a.get(k), b.get(k)
+        if x is None or y is None:
+            continue
+        out[k] = {"before": x, "after": y, "pct": round((y - x) / x * 100) if x else 0}
+    return out
