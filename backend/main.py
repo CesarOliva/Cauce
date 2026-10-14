@@ -1,7 +1,3 @@
-"""API de Cauce. Ejecutar: .venv/Scripts/python -m uvicorn main:app --reload --port 8000"""
-
-from __future__ import annotations
-
 import asyncio
 
 from fastapi import FastAPI
@@ -12,39 +8,38 @@ from pydantic import BaseModel
 from cauce import catalog
 from cauce.engine import compare, evaluate, rebalance_ops, relations
 from cauce.layout import alternatives, ops_moves, score
-from cauce.plant import example
 from cauce.providers import get_engineer, get_extractor
 from cauce.story import STORY_SCHEMA, STORY_SYSTEM, build_plant
 
 app = FastAPI(title="Cauce")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-extractor = get_extractor()   # solo devuelve JSON
-engineer = get_engineer()     # conversa y escribe informes
+extractor = get_extractor()   # devuelve JSON
+engineer = get_engineer()     # escribe informes
 
 
-class StoryIn(BaseModel):
+class StoryInterface(BaseModel):
     text: str
 
 
-class PlantIn(BaseModel):
+class PlantInterface(BaseModel):
     plant: dict
 
 
-class LayoutIn(BaseModel):
+class LayoutInterface(BaseModel):
     plant: dict
     positions: dict
     rebalance: bool = False
 
 
-class ContextIn(BaseModel):
+class ContextInterface(BaseModel):
     plant: dict
     analysis: dict | None = None
     redesign: dict | None = None
 
 
-class ChatIn(BaseModel):
+class ChatInterface(BaseModel):
     messages: list[dict]
-    context: ContextIn | None = None
+    context: ContextInterface | None = None
 
 
 @app.get("/api/health")
@@ -61,39 +56,35 @@ async def catalog_route():
     return catalog.public()
 
 
-@app.get("/api/example")
-async def example_route():
-    return {"plant": example()}
-
-
 @app.post("/api/story")
-async def story(body: StoryIn):
+async def story(body: StoryInterface):
     extracted, error = None, None
+    
     try:
         extracted = await extractor.json(STORY_SYSTEM, body.text, STORY_SCHEMA)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         error = str(e)
+
     result = build_plant(body.text, extracted)
     return {**result, "error": error, "extracted": extracted}
 
 
 @app.post("/api/routes")
-async def routes(body: LayoutIn):
-    """Recorridos de un layout (para el editor): no necesita supuestos."""
+async def routes(body: LayoutInterface):
     plant = {**body.plant, "use_assumptions": False}
     m = evaluate(plant, body.positions)
     return {"legs": m["legs"], "piece_m": m["piece_m"], "blocked_legs": m["blocked_legs"], "avoid_hits": m["avoid_hits"]}
 
 
 @app.post("/api/evaluate")
-async def evaluate_route(body: LayoutIn):
+async def evaluate_route(body: LayoutInterface):
     ops = rebalance_ops(body.plant, body.positions) if body.rebalance and body.plant.get("use_assumptions") else None
     m = evaluate(body.plant, body.positions, ops)
     return {**m, "ops_moves": ops_moves(body.plant, ops)}
 
 
 @app.post("/api/analyze")
-async def analyze_route(body: PlantIn):
+async def analyze_route(body: PlantInterface):
     plant = body.plant
     current = evaluate(plant, plant["layout"])
     alts = alternatives(plant)
@@ -112,7 +103,7 @@ async def analyze_route(body: PlantIn):
 
 # ---------- Textos del ingeniero ----------
 
-def facts(ctx: ContextIn) -> str:
+def facts(ctx: ContextInterface) -> str:
     plant, a, rd = ctx.plant, ctx.analysis, ctx.redesign
     names = {s["id"]: s["name"] for s in plant["stations"]}
     lines = [
@@ -152,10 +143,10 @@ REPORT_SYSTEM = (
 )
 
 
-def fallback_report(ctx: ContextIn) -> str:
+def fallback_report(ctx: ContextInterface) -> str:
     a, rd = ctx.analysis, ctx.redesign
     if not a:
-        return "Aún no hay análisis. (Informe generado sin IA.)"
+        return "Informe no generado."
     cur = a["current"]
     txt = f"Hoy una pieza recorre {cur['piece_m']:.0f} m dentro de la planta."
     if rd and rd.get("metrics"):
@@ -169,8 +160,7 @@ def fallback_report(ctx: ContextIn) -> str:
         "\n\nAcciones para esta semana:\n"
         "1. Marcar en el piso los nuevos lugares antes de mover nada.\n"
         "2. Mover primero las estaciones que más recorrido ahorran.\n"
-        "3. Medir cinco días los tiempos reales para confirmar los supuestos.\n\n"
-        "(Informe generado sin IA: el modelo no respondió.)"
+        "3. Medir cinco días los tiempos reales para confirmar los supuestos."
     )
     return txt
 
@@ -179,20 +169,20 @@ async def stream_or_fallback(messages: list[dict], fallback: str):
     try:
         async for tok in engineer.stream(messages):
             yield tok
-    except Exception:  # noqa: BLE001
+    except Exception: 
         for word in fallback.split(" "):
             yield word + " "
             await asyncio.sleep(0.012)
 
 
 @app.post("/api/report")
-async def report(body: ContextIn):
+async def report(body: ContextInterface):
     msgs = [{"role": "system", "content": REPORT_SYSTEM}, {"role": "user", "content": facts(body)}]
     return StreamingResponse(stream_or_fallback(msgs, fallback_report(body)), media_type="text/plain; charset=utf-8")
 
 
 @app.post("/api/chat")
-async def chat(body: ChatIn):
+async def chat(body: ChatInterface):
     system = (
         "Eres el ingeniero de procesos de Cauce. Respondes en español, breve y concreto, sin emojis. "
         "Si te preguntan algo que los datos no cubren, dilo y sugiere qué medir. Datos de la planta:\n"
@@ -228,7 +218,7 @@ def fallback_missions() -> list[dict]:
 
 
 @app.post("/api/missions")
-async def missions(body: ContextIn):
+async def missions(body: ContextInterface):
     prompt = "Propón 3 misiones cortas para el equipo de planta, enfocadas en equipos y no en personas, con puntos entre 50 y 150. Datos:\n" + facts(body)
     try:
         # Las misiones son datos que usa el programa: las pide el extractor.

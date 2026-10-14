@@ -1,9 +1,5 @@
 import * as THREE from 'three'
 
-/* Maquetas en escala de grises. Todo en metros, y hacia arriba.
-   Son representaciones genéricas: no pretenden copiar una máquina real,
-   sino mostrar qué tipo de trabajo hace (almacenar, cortar, armar, pasar por una línea...). */
-
 export const M = {
   white: new THREE.MeshStandardMaterial({ color: 0xf8f8f8, roughness: 0.75 }),
   light: new THREE.MeshStandardMaterial({ color: 0xe0e0e0, roughness: 0.8 }),
