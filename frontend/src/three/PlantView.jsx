@@ -2,8 +2,6 @@ import { useEffect, useImperativeHandle, useRef, useState } from 'react'
 import PlantScene from './PlantScene'
 import { setCursor } from '../fx/Cursor'
 
-/* Envoltura de React para la escena. La escena se reconstruye cuando cambia
-   la planta; operarios, portones y cuello de botella se actualizan aparte. */
 export default function PlantView({ ref, plant, positions, extras, buildKey, onSelect, tools, legend = true, hint = 'Arrastra para girar. Rueda para acercar. Clic en una máquina para enfocarla.' }) {
   const host = useRef(null)
   const labels = useRef(null)
@@ -25,7 +23,6 @@ export default function PlantView({ ref, plant, positions, extras, buildKey, onS
       s.dispose()
       scene.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -34,7 +31,6 @@ export default function PlantView({ ref, plant, positions, extras, buildKey, onS
     // La cámara se coloca solo la primera vez: al reconstruir (por ejemplo al editar) se queda donde estaba.
     if (!placed.current) scene.current.setView(view)
     placed.current = true
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plant, buildKey])
 
   useEffect(() => {
