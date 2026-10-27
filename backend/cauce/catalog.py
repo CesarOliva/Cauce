@@ -19,8 +19,8 @@ KINDS = [
     ("bobinado", "Bobinadora", 2.5, 2.5, 30.0, 1, ["bobin", "embobin"]),
     ("prensa", "Prensa o troquel", 2.6, 2.6, 1.5, 1, ["prensa", "troquel", "doblad", "punzon", "estampad"]),
     ("soldadura", "Soldadura", 4, 4, 5.0, 1, ["sold"]),
-    ("pulido", "Pulido o lijado", 6, 2.6, 4.0, 1, ["pulid", "pulidora", "lij", "bisel", "esmeril", "canto"]),
-    ("pintura", "Cabina de pintura", 5, 4.5, 5.0, 1, ["pint", "barniz", "laca", "sandblast", "arenad", "chorro de arena", "recubr"]),
+    ("pulido", "Pulido o lijado", 6, 2.6, 4.0, 1, ["pulid", "pulidora", "lij", "cepill", "bisel", "esmeril", "canto"]),
+    ("pintura", "Cabina de pintura", 5, 4.5, 5.0, 1, ["pint", "aerograf", "barniz", "laca", "sandblast", "arenad", "chorro de arena", "recubr"]),
     ("horno", "Horno", 6, 3, 8.0, 1, ["horno", "hornea", "coccion", "curado", "templad"]),
     ("lavado", "Lavado", 5.5, 2.6, 1.0, 1, ["lavad", "lavar", "lavan"]),
     ("secado", "Secado", 5, 2.6, 2.0, 1, ["secado", "secador", "secan"]),
@@ -42,10 +42,17 @@ ZONE_KINDS = [
     ("banos", "Baños", 5, 5, ["bano"]),
     ("comedor", "Comedor", 6, 5, ["comedor del personal", "comedor de los trabajadores", "cafeteria"]),
     ("bloqueado", "Zona bloqueada", 4, 4, []),
+    # Pasillo reservado: no se colocan máquinas encima, pero el material sí pasa por él.
+    ("pasillo", "Pasillo", 20, 3, []),
+    # Área de trabajo: solo marca el piso (zona de corte, de pintura...). Las máquinas van dentro y el material la cruza.
+    ("area", "Área de trabajo", 10, 8, []),
 ]
 ZONE = {z[0]: {"id": z[0], "name": z[1], "w": z[2], "d": z[3], "keywords": z[4]} for z in ZONE_KINDS}
 
 # Tipos que ensucian (polvo, ruido, calor) y tipos que deben quedar limpios.
+# Zonas que solo se pintan en el piso: no estorban a las rutas.
+WALKABLE_ZONES = {"pasillo", "area"}
+
 DIRTY = {"pintura", "soldadura", "pulido", "sierra", "horno", "prensa"}
 CLEAN = {"empaque", "inspeccion", "oficina", "comedor"}
 

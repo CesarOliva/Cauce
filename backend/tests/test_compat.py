@@ -96,6 +96,8 @@ def test_capabilities_coherente(client):
     routes = {getattr(x, "path", None) for x in main.app.routes}
     # Cada función anunciada tiene con qué funcionar.
     needs = {
+        "context_master": lambda: __import__("cauce.agents.context_pipeline"),
+        "construction_jobs": lambda: __import__("cauce.master_builder"),
         "report_validation": lambda: __import__("cauce.validate"),
         "segmented_context": lambda: __import__("cauce.context"),
         "count": lambda: __import__("cauce.units"),
@@ -105,6 +107,12 @@ def test_capabilities_coherente(client):
         "flows": lambda: __import__("cauce.flows"),
         "conveyors": lambda: __import__("cauce.flows"),
         "simulate": lambda: "/api/simulate" in routes or (_ for _ in ()).throw(AssertionError("falta /api/simulate")),
+        "context_agents": lambda: "/api/context/organize" in routes or (_ for _ in ()).throw(AssertionError("falta /api/context/organize")),
+        "context_workspace": lambda: __import__("cauce.workspace_routes"),
+        "context_jobs": lambda: __import__("cauce.workspace_jobs"),
+        "context_documents": lambda: __import__("cauce.workspace_documents"),
+        "work_studies": lambda: __import__("cauce.workspace_deliverables"),
+        "operator_import": lambda: __import__("cauce.workspace_documents"),
     }
     for f in body["features"]:
         assert f in needs, f"función desconocida en capabilities: {f}"
@@ -114,3 +122,16 @@ def test_capabilities_coherente(client):
 
 def test_baseline_existe():
     assert (PRUEBAS / "baseline-transformadores.json").exists()
+
+
+
+def test_analyze_no_se_bloquea_si_el_maestro_no_esta_al_dia(monkeypatch, client, plant):
+    """Comprobar el plano contra el maestro es un extra: si falla, el análisis sigue y lo explica."""
+    import cauce.master_builder as builder
+
+    def stale(master, plant):
+        raise ValueError("Hay datos manuales nuevos que todavía no fueron integrados al maestro.")
+    monkeypatch.setattr(builder, "verify", stale)
+    r = client.post("/api/analyze", json={"plant": plant, "reviewed": True, "context": {"segments": {}, "master": {"schema_version": 2}}})
+    assert r.status_code == 200, r.text
+    assert r.json()["construction_verification"]["status"] == "skipped"

@@ -1,142 +1,11 @@
+import ConstructionReview from '../components/context/ConstructionReview'
 import { useRef, useState } from 'react'
 import { fmt } from '../api'
 import WaitPanel from '../components/WaitPanel'
 import PlanEditor from '../editor/PlanEditor'
 import Btn from '../fx/Btn'
 import { Appear, RevealTitle } from '../fx/Reveal'
-import Context2 from '../components/Context2'
-import ContextPanel from '../components/ContextPanel'
-import References from '../components/References'
-import { parseProject } from '../importProject'
-
-function Switch({ on, onChange, children }) {
-    return (
-        <button type="button" className="switch" role="switch" aria-checked={on} onClick={() => onChange(!on)}>
-            <span className="switch-track">
-                <span className="switch-knob" />
-            </span>
-            {children}
-        </button>
-    )
-}
-
-function Assumptions({ draft, setDraft, catalog, info }) {
-    const [clearedZeros, setClearedZeros] = useState({})
-    const on = !!draft.use_assumptions
-    const src = Object.fromEntries((info?.assumptions || []).map((a) => [a.key, a.source]))
-    const setParam = (k, v) => setDraft({ ...draft, params: { ...draft.params, [k]: v } })
-    const setSt = (id, patch) => setDraft({ ...draft, stations: draft.stations.map((s) => (s.id === id ? { ...s, ...patch } : s)) })
-    const people = draft.stations.reduce((a, s) => a + (Number(s.ops) || 0), 0)
-    const clearZeroOnFocus = (key, e) => {
-        if (e.currentTarget.value !== '' && Number(e.currentTarget.value) === 0) {
-            setClearedZeros((current) => ({ ...current, [key]: true }))
-        }
-    }
-    const restoreZeroOnBlur = (key) => {
-        setClearedZeros((current) => {
-            const next = { ...current }
-            delete next[key]
-            return next
-        })
-    }
-    const showValue = (key, value) => clearedZeros[key] ? '' : value
-
-    return (
-        <div className="block stack">
-            <div className="chart-head">
-                <div>
-                    <h3>Supuestos para calcular</h3>
-                    <p className="small">Sin supuestos solo se analizan recorridos y cercanía entre áreas. Con ellos también se calculan capacidad, cuello de botella y tiempos.</p>
-                </div>
-
-                <Switch on={on} onChange={(v) => setDraft({ ...draft, use_assumptions: v })}>
-                    {on ? 'Usar supuestos' : 'Sin supuestos'}
-                </Switch>
-            </div>
-
-            {on && (
-                <>
-                    {info?.ai_assumptions?.length > 0 && (
-                        <details className="how">
-                            <summary>Supuestos tomados en el análisis</summary>
-                            <ul>
-                                {info.ai_assumptions.map((assumption, idx) => (
-                                    <li key={idx}>{assumption}</li>
-                                ))}
-                            </ul>
-                        </details>
-                    )}
-
-                    <div className="assume assume--grid">
-                        {catalog?.assumptions.map((assumption) => (
-                            <div key={assumption.key} className="assume-row" data-src={src[assumption.key] || 'supuesto'}>
-                                <div>
-                                    <label htmlFor={`a-${assumption.key}`}>{assumption.label}</label>
-                                    <span className="small">
-                                        {assumption.why} ({assumption.unit})
-                                    </span>
-                                </div>
-
-                                <input id={`a-${assumption.key}`} type="number" step="any" min="0" value={showValue(`param-${assumption.key}`, draft.params?.[assumption.key] ?? assumption.value)} onFocus={(e) => clearZeroOnFocus(`param-${assumption.key}`, e)} onBlur={() => restoreZeroOnBlur(`param-${assumption.key}`)} onChange={(e) => {
-                                    if (e.target.value === '') return
-                                    setParam(assumption.key, Number(e.target.value))
-                                    restoreZeroOnBlur(`param-${assumption.key}`)
-                                }} />
-                            </div>
-                        ))}
-                    </div>
-
-                    <div>
-                        <div className="chart-head">
-                            <h3>Tiempos y personas por estación</h3>
-                            <span className="small num">{people} personas en planta</span>
-                        </div>
-
-                        <table className="table">
-                            <thead>
-                                <tr>
-                                    <th>Estación</th>
-                                    <th className="num">Minutos por pieza</th>
-                                    <th className="num">Operarios</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {draft.stations.map((station) => (
-                                    <tr key={station.id}>
-                                        <td>
-                                            {station.name}
-                                            {station.t_source === 'ia' && <span className="small"> (estimado por la IA)</span>}
-                                        </td>
-
-                                        <td className="num">
-                                            <input className="cell-input" type="number" min="0" step="0.1" value={showValue(`time-${station.id}`, station.t ?? 0)} onFocus={(e) => clearZeroOnFocus(`time-${station.id}`, e)} onBlur={() => restoreZeroOnBlur(`time-${station.id}`)} onChange={(e) => {
-                                                if (e.target.value === '') return
-                                                setSt(station.id, { t: Number(e.target.value), t_source: 'usuario' })
-                                                restoreZeroOnBlur(`time-${station.id}`)
-                                            }} aria-label={`Minutos por pieza en ${station.name}`} />
-                                        </td>
-
-                                        <td className="num">
-                                            <input className="cell-input" type="number" min="0" step="1" value={showValue(`ops-${station.id}`, station.ops ?? 0)} onFocus={(e) => clearZeroOnFocus(`ops-${station.id}`, e)} onBlur={() => restoreZeroOnBlur(`ops-${station.id}`)} onChange={(e) => {
-                                                if (e.target.value === '') return
-                                                setSt(station.id, { ops: Math.max(0, Math.round(Number(e.target.value))) })
-                                                restoreZeroOnBlur(`ops-${station.id}`)
-                                            }} aria-label={`Operarios en ${station.name}`} />
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-
-                        <p className="small" style={{ marginTop: 8 }}>
-                            Con 0 operarios y minutos mayores a 0, la estación se toma como máquina automática.
-                        </p>
-                    </div>
-                </>
-            )}
-        </div>
-    )
-}
+import { ask } from '../components/Dialog'
 
 /* Nombre editable en el mismo chip: clic para escribir, Enter o salir para guardar. */
 function ChipName({ value, onCommit }) {
@@ -251,7 +120,7 @@ function ProcessSummary({ draft, setDraft }) {
             {draft.zones.length > 0 && (
                 <div className="chips" style={{ marginTop: 10 }}>
                     {draft.zones.map((zone) => (
-                        <span key={zone.id} className="chip chip--edit" data-kind="supuesto">
+                        <span key={zone.id} className="chip chip--edit" data-kind="zona">
                             <i />
                             <ChipName value={zone.name} onCommit={(name) => rename('zones', zone.id, name)} />
                         </span>
@@ -284,30 +153,15 @@ function SpatialNote({ spatial }) {
     )
 }
 
-export default function Story({ text, setText, info, draft, setDraft, catalog, reading, error, onRead, onBlank, onImport, onSave, saving, context, setContext, context2 }) {
+export default function Story({ saveError, onReadContext, onVerify, constructionProgress, text, setText, info, draft, setDraft, catalog, reading, error, onRead, onBlank, onSave, saving, onOpenContext, context2, pending = 0 }) {
     const empty = !text.trim()
     const [metrics, setMetrics] = useState(null)
-    const [importError, setImportError] = useState(null)
     const editorRef = useRef(null)
-    const fileRef = useRef(null)
-
-    // Carga un proyecto o una planta en JSON (por ejemplo pruebas/transformadores.json) en el editor.
-    const importFile = async (e) => {
-        const file = e.target.files?.[0]
-        e.target.value = ''
-        if (!file) return
-        const out = parseProject(await file.text())
-        setImportError(out.error || null)
-        if (out.error) return
-        if (draft?.stations?.length && !window.confirm('El plano actual se reemplaza por el importado. ¿Seguir?')) return
-        onImport(out.plant, out.warnings)
-        scrollToEditor()
-    }
 
     const scrollToEditor = () => setTimeout(() => editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120)
 
-    const restartPlan = () => {
-        if (!window.confirm('Se borrará todo el plano (máquinas, rutas, paredes y zonas) para empezar uno vacío. ¿Seguir?')) return
+    const restartPlan = async () => {
+        if (!(await ask('Se borrará todo el plano (máquinas, rutas, paredes y zonas) para empezar uno vacío.', { title: '¿Reiniciar el plano?', ok: 'Sí, reiniciar' }))) return
         onBlank()
     }
 
@@ -319,34 +173,56 @@ export default function Story({ text, setText, info, draft, setDraft, catalog, r
                     <span>Detalles y plano</span>
                 </span>
                 <RevealTitle text="Describe cómo es tu planta." />
-                <p className="lede">Describe tu planta y proceso. La IA arma un primer plano. Luego lo corriges tú: mueve máquinas, dibuja rutas, paredes y zonas hasta que quede como realmente es tu espacio.</p>
+                <p className="lede">Escribe tu planta y tu proceso con tus palabras: la IA arma un primer plano y luego lo corriges tú. Si además tienes documentos, estudios o datos por tema, inicia un proyecto avanzado.</p>
             </header>
 
             <div className="split">
                 <Appear className="stack">
-                    <div className="panel">
+                    <div className="panel story-start">
                         <div className="story-sheet" style={{ border: 0 }}>
-                            <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Tengo mi planta productora…" aria-label="Detalles de tu planta" style={{ minHeight: 260 }} />
+                            <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Tengo mi planta productora…" aria-label="Descripción de tu planta" style={{ minHeight: 260 }} />
                         </div>
-                        <div className="story-bar" style={{ justifyContent: 'flex-end' }}>
+                        <div className="story-bar story-bar--main">
                             <Btn
+                                wide
                                 onClick={async () => {
                                     if (await onRead()) scrollToEditor()
                                 }}
                                 disabled={reading || empty}
                             >
-                                {reading ? 'Analizando…' : 'Analizar'}
+                                {reading ? 'Analizando…' : 'Crear plano desde mi descripción'}
                             </Btn>
                         </div>
                     </div>
 
                     {error && <p className="small">{error}</p>}
-                    {importError && <p className="small">{importError}</p>}
-                    <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={importFile} />
+
+                    <div className="story-advanced">
+                        <div>
+                            <span className="context-eyebrow">OTRA FORMA DE EMPEZAR</span>
+                            <p className="small">¿Tienes documentos, estudios del trabajo o datos por tema? Organízalos en el contexto de la planta.</p>
+                        </div>
+                        {pending > 0 && (
+                            <p className="context-pending small">
+                                <b>{pending} {pending === 1 ? 'dato propuesto' : 'datos propuestos'}</b> por revisar.{' '}
+                                <button type="button" className="link-btn" onClick={() => onOpenContext('inicio')}>Revisarlos</button>
+                            </p>
+                        )}
+                        <div className="row">
+                            <Btn variant="ghost" size="small" onClick={() => onOpenContext('inicio')}>
+                                {onReadContext ? 'Ver contexto de la planta' : 'Iniciar proyecto avanzado'}
+                            </Btn>
+                            {onReadContext && (
+                                <Btn size="small" disabled={reading} onClick={async () => { if (await onReadContext()) scrollToEditor() }}>
+                                    Construir el plano desde mi contexto
+                                </Btn>
+                            )}
+                        </div>
+                    </div>
                 </Appear>
 
                 <div className="stack">
-                    {reading && <WaitPanel kind="story" title="Interpretando el acomodo de tu planta…" game="Juega mientras se analiza tu planta" />}
+                    {reading && <><WaitPanel kind="story" title={constructionProgress ? 'Construyendo y comprobando tu planta por partes…' : 'Interpretando el acomodo de tu planta…'} game="Juega mientras se analiza tu planta" />{constructionProgress && <p role="status">{({ building: 'Preparando el espacio', entities: 'Colocando áreas y equipos', routes: 'Conectando los recorridos', verifying: 'Comprobando el conjunto', review: 'Plano listo para revisión' })[constructionProgress.stage] || 'Preparando la construcción'}{constructionProgress.total ? ` · ${constructionProgress.completed} de ${constructionProgress.total}` : ''}</p>}</>}
 
                     {!reading && !info && (
                         <div className="block">
@@ -355,17 +231,12 @@ export default function Story({ text, setText, info, draft, setDraft, catalog, r
                             <ul className="note-list" style={{ marginTop: 14 }}>
                                 <li>La IA lee el contexto y devuelve solo datos: máquinas, rutas, zonas y cifras.</li>
                                 <li>Se arma un primer plano. Tú lo corriges en el editor de abajo.</li>
-                                <li>Los supuestos (tiempos, producción) son opcionales: sin estos, solo se analizan recorridos.</li>
                             </ul>
 
                             <p className="small" style={{ marginTop: 18 }}>
                                 ¿Prefieres no usar la IA?{' '}
                                 <button type="button" className="link-btn" onClick={() => (onBlank(), scrollToEditor())}>
                                     Dibuja el plano tú mismo
-                                </button>
-                                {' '}o{' '}
-                                <button type="button" className="link-btn" onClick={() => fileRef.current?.click()}>
-                                    Importar proyecto (JSON)
                                 </button>
                             </p>
                         </div>
@@ -393,6 +264,9 @@ export default function Story({ text, setText, info, draft, setDraft, catalog, r
                 </div>
             </div>
 
+            {!reading && constructionProgress?.stage === 'blocked' && <ConstructionReview report={constructionProgress.verification} title="La construcción se detuvo en este lote; tu plano anterior sigue guardado" />}
+            {info?.verification && <ConstructionReview report={info.verification} stale={info.verificationDraftKey !== JSON.stringify(draft)} />}
+            {draft && onVerify && <button className="btn btn--ghost btn--small" type="button" onClick={onVerify}>Comprobar el plano contra el contexto</button>}
             {draft && (
                 <div ref={editorRef} style={{ marginTop: 48, scrollMarginTop: 24 }}>
                     <div className="chart-head" style={{ marginBottom: 16 }}>
@@ -407,49 +281,31 @@ export default function Story({ text, setText, info, draft, setDraft, catalog, r
                         mode="full"
                         onMetrics={setMetrics}
                         actions={
-                            <>
-                                <button type="button" className="btn btn--ghost btn--small" onClick={() => fileRef.current?.click()} title="Carga una planta o un proyecto guardado en JSON">
-                                    Importar JSON
-                                </button>
-                                <button type="button" className="btn btn--ghost btn--small" onClick={restartPlan} title="Borra todo el plano y empieza uno vacío">
-                                    Reiniciar plano
-                                </button>
-                            </>
+                            <button type="button" className="btn btn--ghost btn--small" onClick={restartPlan} title="Borra todo el plano y empieza uno vacío">
+                                Reiniciar plano
+                            </button>
                         }
                     />
 
-                    <div style={{ marginTop: 24 }}>
-                        <Assumptions draft={draft} setDraft={setDraft} catalog={catalog} info={info} />
-                    </div>
-
-                    {setContext && (
-                        <div style={{ marginTop: 24 }}>
-                            <ContextPanel context={context} setContext={setContext} />
-                        </div>
-                    )}
-
-                    {setContext && (
-                        <div style={{ marginTop: 24 }}>
-                            <References context={context} setContext={setContext} />
-                        </div>
-                    )}
-
                     {context2 && (
-                        <div style={{ marginTop: 24 }}>
-                            <Context2 summary={context2.summary} confirmed={context2.confirmed} onConfirm={context2.onConfirm} />
+                        <div className="context-review-card">
+                            <div><h3>Así entendimos tu planta</h3><p className="small">{context2.confirmed ? 'Confirmaste esta versión del plano, contexto y prioridades.' : 'Opcional: revisa el plano junto con los datos y las prioridades antes de analizar.'}</p></div>
+                            <Btn variant="ghost" size="small" onClick={() => onOpenContext('revision')}>
+                                {context2.confirmed ? 'Ver revisión' : 'Revisar y confirmar'}
+                            </Btn>
                         </div>
                     )}
 
                     <div className="row" style={{ marginTop: 32 }}>
-                        <Btn onClick={onSave} disabled={saving || draft.stations.length === 0 || (context2 && !context2.confirmed)}>
+                        <Btn onClick={onSave} disabled={saving || draft.stations.length === 0}>
                             {saving ? 'Analizando…' : 'Guardar y ver en 3D'}
                         </Btn>
 
                         {metrics && <span className="small num">Una pieza recorre {fmt(metrics.piece_m, 1)} m en este plano.</span>}
                         
                         {draft.stations.length === 0 && <span className="small">Agrega al menos una máquina.</span>}
-                        {draft.stations.length > 0 && context2 && !context2.confirmed && <span className="small">Confirma el resumen de arriba para analizar.</span>}
                     </div>
+                    {saveError && <p className="context-pending small" role="alert" style={{ marginTop: 16 }}>{saveError}</p>}
                 </div>
             )}
         </section>

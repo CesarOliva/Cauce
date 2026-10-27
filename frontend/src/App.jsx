@@ -3,17 +3,22 @@ import { AnimatePresence, motion } from 'motion/react'
 import { api } from './api'
 import { has } from './capabilities'
 import { upgradePlant } from './migrate'
-import { isStale } from './proposals'
-import { contextPayload, EMPTY_CONTEXT } from './context'
+import { isStale, samePlant } from './proposals'
+import { contextPayload } from './context'
 import { summarize } from './context2'
+import { deleteAttachments, reviewSignature } from './contextWorkspace'
+import { acceptedContext, constructWorkspace, workspaceRequest } from './workspaceApi'
+import ContextWorkspace from './components/context/ContextWorkspace'
+import './components/context/context-entry.css'
 import FlowMark from './brand/FlowMark'
+import DialogHost, { ask } from './components/Dialog'
 import EngineerChat from './components/EngineerChat'
 import useReport from './components/useReport'
 import { startWait } from './components/wait'
 import ClickSplash from './fx/ClickSplash'
 import Cursor from './fx/Cursor'
 import Intro from './fx/Intro'
-import { blankPlant, chosen as chosenOf, EMPTY_GAME, useProject } from './project'
+import { blankPlant, chosen as chosenOf, useProject } from './project'
 import Story from './steps/Story'
 import useCaps from './useCaps'
 
@@ -23,14 +28,15 @@ const Diagnosis = lazy(() => import('./steps/Diagnosis'))
 const Redesign = lazy(() => import('./steps/Redesign'))
 const Report = lazy(() => import('./steps/Report'))
 const Summary = lazy(() => import('./steps/Summary'))
-const Workshop = lazy(() => import('./steps/Workshop'))
 // En cuanto la página queda libre se baja el paso 2, así «Guardar y ver en 3D» no espera la descarga.
 const preload = () => import('./steps/Plant')
 
-const STEPS = ['Proceso y plano', 'Tu planta en 3D', 'Diagnóstico', 'Rediseño', 'Reporte', 'Resumen', 'Taller de mejora (extra)']
+const OFFLINE = 'Conectando con el servidor… Si no se conecta, revisa que el backend esté encendido (puerto 8000).'
+
+const STEPS = ['Proceso y plano', 'Tu planta en 3D', 'Diagnóstico', 'Rediseño', 'Reporte', 'Resumen']
 
 /* Lo mínimo que necesita el ingeniero para hablar de la planta (sin trazos). */
-function slim(project, ch, segmented = false) {
+function slim(project, ch, segmented = false, workspace = false) {
     const { plant, analysis } = project
     if (!plant) return null
 
@@ -48,39 +54,78 @@ function slim(project, ch, segmented = false) {
         },
         redesign: ch && ch.metrics ? { name: ch.name, metrics: pick(ch.metrics) } : null,
         // Texto si el backend no conoce el contexto segmentado; objeto si lo anuncia.
-        context: contextPayload(project.context, project.text, segmented),
+        context: workspace ? acceptedContext(project) : contextPayload(project.context, project.text, segmented),
     }
 }
 
 export default function App() {
     const [intro, setIntro] = useState(true)
-    const [project, update, reset] = useProject()
-    const [step, setStep] = useState(() => (project.plant ? 1 : 0))
+    const [project, update, reset, library] = useProject()
+    // Al recargar siempre se abre el paso 1; los pasos ya hechos siguen disponibles en la barra.
+    const [step, setStep] = useState(0)
     const [catalog, setCatalog] = useState(null)
     const [reading, setReading] = useState(false)
+    const [constructionProgress, setConstructionProgress] = useState(null)
     const [saving, setSaving] = useState(false)
+    const [saveError, setSaveError] = useState(null)
     const [error, setError] = useState(null)
     const [chat, setChat] = useState(false)
+    const [contextTopic, setContextTopic] = useState(null)
     const [toast, setToast] = useState(null)
     const [ai, setAi] = useState(null)
     const caps = useCaps()
     const stage = useRef(null)
+    const contextOpener = useRef(null)
 
     const { plant, analysis, draft, info } = project
     const ch = useMemo(() => chosenOf(project), [project])
     const segmented = has(caps, 'segmented_context')
-    const context = useMemo(() => slim(project, ch, segmented), [project, ch, segmented])
+    const workspaceEnabled = has(caps, 'context_workspace')
+    const context = useMemo(() => slim(project, ch, segmented, workspaceEnabled), [project, ch, segmented, workspaceEnabled])
     const summary = useMemo(() => summarize(project.draft, project.plant), [project.draft, project.plant])
-    const confirmed = !!summary.signature && project.context2Ok === summary.signature
-    const version = `${analysis?.current?.piece_m}-${ch?.id}-${ch?.metrics?.piece_m}`
-    const report = useReport(context, version, has(caps, 'report_validation'))
-    const stale = isStale(project)
+    const signature = useMemo(() => reviewSignature(project), [project])
+    const confirmed = !!signature && project.context2Ok === signature
+    const stale = isStale(project) || (!!analysis && project.analysisInputSignature !== signature)
+    const version = `${library.activeId}-${signature}-${analysis?.current?.piece_m}-${ch?.id}-${ch?.metrics?.piece_m}`
+    const report = useReport(stale ? null : context, version, has(caps, 'report_validation'))
+    const openContext = (topic = 'inicio') => {
+        contextOpener.current = document.activeElement
+        setContextTopic(topic)
+    }
+    const closeContext = useCallback(() => {
+        setContextTopic(null)
+        requestAnimationFrame(() => {
+            const opener = contextOpener.current
+            if (opener?.isConnected) opener.focus()
+            else document.querySelector('.context-open')?.focus()
+        })
+    }, [])
 
     useEffect(() => {
         if (window.requestIdleCallback) window.requestIdleCallback(preload)
         else setTimeout(preload, 2500)
-        api.health().then(setAi).catch(() => setAi(null))
-        api.catalog().then(setCatalog).catch(() => setError('Error conectando con el servidor.'))
+        // El backend arranca en otra ventana y tarda unos segundos (o se reinicia con --reload):
+        // se reintenta con espera creciente en vez de quedarse sin catálogo ni IA.
+        let alive = true
+        let timer
+        const connect = async (attempt = 0) => {
+            try {
+                const [health, cat] = await Promise.all([api.health(), api.catalog()])
+                if (!alive) return
+                setAi(health)
+                setCatalog(cat)
+                setError((e) => (e === OFFLINE ? null : e))
+            } catch {
+                if (!alive) return
+                if (attempt >= 2) setError(OFFLINE)
+                timer = setTimeout(() => connect(attempt + 1), Math.min(10000, 1000 * 2 ** attempt))
+            }
+        }
+        connect()
+        return () => {
+            alive = false
+            clearTimeout(timer)
+        }
     }, [])
 
     const notify = useCallback((msg) => setToast({ msg, id: Date.now() }), [])
@@ -96,66 +141,77 @@ export default function App() {
             setStep(i)
             update((p) => ({ maxStep: Math.max(p.maxStep || 0, i) }))
             stage.current?.scrollTo({ top: 0, behavior: 'instant' })
-        }, [],
+        }, [update],
     )
 
-    const defaultParams = () => Object.fromEntries((catalog?.assumptions || []).map((a) => [a.key, a.value]))
+    const verifyDraft = async () => {
+        try {
+            const verification = await api.verifyMaster(project.draft, acceptedContext(project))
+            update({ info: { ...project.info, verification, verificationDraftKey: JSON.stringify(project.draft) } })
+        } catch (error) { setError(error.message) }
+    }
 
-    const read = async () => {
+    // El camino principal es la descripción directa: nunca obliga a pasar por el contexto.
+    // Construir desde el contexto es otra opción, disponible cuando ya hay un maestro aceptado.
+    const contextMaster = acceptedContext(project).master
+    const contextReady = has(caps, 'construction_jobs') && contextMaster?.status === 'accepted' && !contextMaster.pending_manual_ids?.length && !contextMaster.pending_source_policy
+
+    const read = async (fromContext = false) => {
         setReading(true)
+        setConstructionProgress(null)
         setError(null)
 
         try {
             const done = startWait('story')
-            const r = await api.story(project.text)
+            const r = fromContext && contextReady
+                ? await constructWorkspace(project, library.activeId, {
+                    onProgress: (work) => {
+                        setConstructionProgress({ stage: work.stage, ...work.stage_progress })
+                        update({ constructionJob: { id: work.id, status: work.status } })
+                    },
+                    onSaved: (saved) => update({ serverWorkspaceId: saved.id, serverRevision: saved.revision }),
+                })
+                : await api.story(project.text)
             done()
-            update({ draft: upgradePlant(r.plant), info: { source: r.source, notes: r.notes, ai_assumptions: r.ai_assumptions, assumptions: r.assumptions, error: r.error, spatial: r.spatial } })
+            const built = upgradePlant(r.plant)
+            update({ draft: built, info: { source: r.source, notes: r.notes, error: r.error, spatial: r.spatial, verification: r.verification, verificationDraftKey: JSON.stringify(built) } })
             setReading(false)
 
             return true
-        } catch {
-            setError('Error al analizar el proceso.')
+        } catch (error) {
+            if (error.job?.verification) setConstructionProgress({ stage: 'blocked', verification: error.job.verification })
+            setError(`Error al analizar el proceso: ${error instanceof Error ? error.message : 'Error desconocido.'}`)
             setReading(false)
             return false
         }
     }
 
-    const importPlant = (plant, warnings) => update({ draft: upgradePlant(plant), info: { source: 'Proyecto importado', notes: warnings } })
-
-    const blank = () => update({ draft: blankPlant(defaultParams()), info: { source: 'Plano vacío', notes: [] } })
+    const blank = () => update({ draft: blankPlant(), info: { source: 'Plano vacío', notes: [] } })
 
     const save = async () => {
-        if (!confirmed) return
+        setSaveError(null)
         setSaving(true)
         setError(null)
 
         try {
-            const out = await api.analyze(draft, { context: context?.context, ...(has(caps, 'weights') && project.weights ? { weights: project.weights } : {}) })
+            const out = await api.analyze(draft, { reviewed: true, context: has(caps, 'context_workspace') ? acceptedContext(project) : contextPayload(project.context, project.text, segmented), ...(has(caps, 'weights') && project.weights && project.prioritiesEnabled !== false ? { weights: project.weights } : {}) })
             update((p) => ({
                 plant: draft,
                 analysis: out,
                 analysisRev: p.draftRev || 0,
-                // El rediseño hecho a mano no se borra al volver a analizar (H7): se conserva y se avisa.
-                redesign: p.redesign?.custom ? { ...p.redesign, choice: p.redesign.choice === 'propio' ? 'propio' : null, metrics: null } : { choice: null, custom: null, metrics: null },
+                analysisInputSignature: signature,
+                // El rediseño hecho a mano no se borra al volver a analizar (H7) si es de la misma planta;
+                // si el plano es otro (otra historia, otro tamaño u otras máquinas), se descarta.
+                redesign: p.redesign?.custom && samePlant(p.redesign.custom.plant || p.plant, draft) ? { ...p.redesign, choice: p.redesign.choice === 'propio' ? 'propio' : null, metrics: null } : { choice: null, custom: null, metrics: null },
                 printed: false,
-                game: EMPTY_GAME,
             }))
             go(1)
-        } catch {
-            setError('Error al analizar el plano.')
+        } catch (e) {
+            // El detalle del backend dice qué falta; un mensaje genérico no ayuda a resolverlo.
+            const detail = String(e?.message || '').replace(/^\/api\/analyze respondió \d+:?\s*/, '')
+            setSaveError(`No se pudo analizar el plano${detail ? `: ${detail}` : '.'}`)
         }
         setSaving(false)
-    }
-
-    // Recalcular con otros pesos: mismo plano, solo cambia la decisión. No toca «Tu rediseño».
-    const reweigh = async (weights) => {
-        try {
-            const out = await api.analyze(plant, { context: context?.context, weights })
-            update({ analysis: out, weights })
-            notify('Se recalculó la recomendación con tus pesos.')
-        } catch {
-            notify('No se pudo recalcular con esos pesos.')
-        }
     }
 
     const setRedesign = useCallback((patch) => update((p) => ({ redesign: { ...p.redesign, ...patch } })), [update])
@@ -163,49 +219,77 @@ export default function App() {
     // Alternativas que se calculan a pedido (la compacta con IA) se suman al análisis guardado.
     const addAlternative = useCallback((alt) => update((p) => ({ analysis: { ...p.analysis, alternatives: [...p.analysis.alternatives.filter((a) => a.id !== alt.id), alt] } })), [update])
 
+    // El navegador avisa «terminó de imprimir» también cuando se cancela el diálogo: no se puede
+    // saber si se guardó el PDF, así que no se avanza solo; se habilita el resumen y la persona sigue.
     const onPrinted = useCallback(() => {
         update({ printed: true })
-        go(5)
-    }, [update, go])
+    }, [update])
 
-    const restart = () => {
-        if (!window.confirm('Se borrará el plano, el rediseño y el reporte de este navegador. ¿Seguir?')) return
+    const restart = async () => {
+        if (!(await ask('Se borrará el plano, el rediseño y el reporte de este navegador.', { title: '¿Empezar otra planta?', ok: 'Sí, borrar todo' }))) return
         reset()
         setStep(0)
     }
 
+    const createProject = (name) => {
+        library.create(name)
+        setContextTopic('proyectos')
+        setStep(0)
+        setChat(false)
+        setError(null)
+    }
+
+    const selectProject = (id) => {
+        if (id === library.activeId) return
+        library.select(id)
+        setContextTopic('proyectos')
+        setStep(0)
+        setChat(false)
+        setError(null)
+    }
+
+    const clearContext = async () => {
+        let saved
+        if (project.serverWorkspaceId && project.serverRevision) saved = await workspaceRequest(`/${project.serverWorkspaceId}/clear-context`, { method: 'POST', body: { expected_revision: project.serverRevision } })
+        const files = project.contextWorkspace?.attachments || []
+        await deleteAttachments(files.map((file) => file.id))
+        library.clearContext()
+        if (saved) update({ serverRevision: saved.revision })
+    }
+
     const ready = !!(plant && analysis)
-    const enabled = (i) => i === 0 || (i <= 4 && ready) || (i === 5 && ready && project.printed) || (i === 6 && ready)
+    const enabled = (i) => i === 0 || (i <= 4 && ready) || (i === 5 && ready && project.printed)
 
     const view = (() => {
         if (step === 0 || !ready)
         return (
             <Story
             text={project.text}
-            setText={(t) => update((p) => ({ text: typeof t === 'function' ? t(p.text) : t }))}
+            setText={(text) => update({ text, printed: false })}
             info={info}
             draft={draft}
             setDraft={(d) => update((p) => ({ draft: d, draftRev: (p.draftRev || 0) + 1 }))}
             catalog={catalog}
             reading={reading}
             error={error}
-            onRead={read}
+            onRead={() => read(false)}
+            onReadContext={contextReady ? () => read(true) : undefined}
+            constructionProgress={constructionProgress}
+            onVerify={contextReady ? verifyDraft : undefined}
             onBlank={blank}
-            onImport={importPlant}
-            context={project.context || EMPTY_CONTEXT}
-            setContext={(c) => update({ context: c })}
-            context2={{ summary, confirmed, onConfirm: () => update({ context2Ok: summary.signature }) }}
+            onOpenContext={openContext}
+            pending={(project.contextWorkspace?.proposals || []).filter((proposal) => proposal.status === 'pending').length}
+            context2={{ confirmed }}
             onSave={save}
+            saveError={saveError}
             saving={saving}
             />
         )
         if (step === 1) return <Plant plant={plant} analysis={analysis} notes={info?.notes || []} onNext={() => go(2)} onEdit={() => go(0)} />
-        if (step === 2) return <Diagnosis plant={plant} analysis={analysis} report={report} onNext={() => go(3)} />
-        if (step === 3) return <Redesign plant={plant} analysis={analysis} redesign={project.redesign} setRedesign={setRedesign} onAddAlternative={addAlternative} catalog={catalog} analysisRev={project.analysisRev || 0} notify={notify} weights={project.weights} onReweigh={reweigh} onNext={() => go(4)} />
-        if (step === 4) return <Report plant={plant} analysis={analysis} chosen={ch} notes={info?.notes || []} report={report} catalog={catalog} onPrinted={onPrinted} onNext={() => go(5)} />
-        if (step === 5) return <Summary plant={plant} analysis={analysis} chosen={ch} context={context} onPrint={() => go(4)} onWorkshop={() => go(6)} onRestart={restart} />
-
-        return <Workshop context={context} chosen={ch} game={project.game} setGame={(f) => update((p) => ({ game: typeof f === 'function' ? f(p.game) : f }))} notify={notify} />
+        if (step === 2) return <Diagnosis plant={plant} analysis={analysis} onNext={() => go(3)} />
+        if (step === 3) return <Redesign canOptimize={!stale} analysisContext={workspaceEnabled && confirmed ? context.context : null} plant={plant} analysis={analysis} weights={project.prioritiesEnabled === false ? undefined : project.weights} prioritiesEnabled={project.prioritiesEnabled !== false} onOpenContext={openContext} redesign={project.redesign} setRedesign={setRedesign} onAddAlternative={addAlternative} catalog={catalog} analysisRev={project.analysisRev || 0} notify={notify} onNext={() => go(4)} />
+        if (step === 4) return <Report studyContext={workspaceEnabled ? context.context : null} plant={plant} analysis={analysis} chosen={ch} notes={info?.notes || []} report={report} catalog={catalog} onPrinted={onPrinted} onNext={() => go(5)} />
+        return <Summary plant={plant} analysis={analysis} chosen={ch} context={context} onPrint={() => go(4)} onSave={() => openContext('guardar')} onRestart={restart} />
     })()
 
     const aiOk = ai?.extractor?.ready && ai?.engineer?.ready
@@ -217,13 +301,14 @@ export default function App() {
             <ClickSplash />
 
             {intro && <Intro onDone={() => setIntro(false)} />}
-            <div className="app">
+            <div className="app" inert={contextTopic !== null ? true : undefined}>
                 <nav className="rail" aria-label="Pasos">
                     <button type="button" className="rail-logo" onClick={() => go(0)} aria-label="Volver al inicio">
                         <FlowMark size={44} state={step === 0 ? 'tangled' : 'u'} color="#fff" hoverMorph />
                     </button>
 
                     <div className="rail-steps">
+                      <div className="rail-track">
                         <div className="rail-line" aria-hidden="true">
                             <motion.div className="rail-line-fill" animate={{ scaleY: Math.min(project.maxStep || 0, 5) / 5 }} transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }} />
                         </div>
@@ -232,17 +317,18 @@ export default function App() {
                             <button
                                 key={name}
                                 type="button"
-                                className={`rail-step${i === 6 ? ' rail-step--extra' : ''}`}
+                                className="rail-step"
                                 data-state={i === step ? 'active' : i <= (project.maxStep || 0) ? 'done' : 'todo'}
                                 disabled={!enabled(i)}
                                 onClick={() => go(i)}
                                 aria-label={name}
                                 aria-current={i === step ? 'step' : undefined}
                             >
-                                {i === 6 ? '+' : i + 1}
+                                {i + 1}
                                 <span className="rail-tip">{name}</span>
                             </button>
                         ))}
+                      </div>
                     </div>
 
                     <div className="rail-ai" title={aiTitle}>
@@ -258,11 +344,18 @@ export default function App() {
                 </nav>
 
                 <main className="stage" ref={stage}>
+                    <div className="context-topbar">
+                        <span className="context-topbar-label">CAUCE <span>/</span> {STEPS[ready ? step : 0]}</span>
+                        <button type="button" className="context-open" onClick={() => openContext()}>
+                            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M3 3h14v14H3zM7 3v14M10 7h4M10 10h4M10 13h2" /></svg>
+                            Ver contexto de la planta <span aria-hidden="true">↗</span>
+                        </button>
+                    </div>
                     <AnimatePresence mode="wait">
-                        <motion.div key={ready ? step : 0} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}>
+                        <motion.div key={`${library.activeId}-${ready ? step : 0}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}>
                           {ready && step > 0 && stale && (
                               <p className="stale-note small" role="status">
-                                  <strong>Desactualizado: el plano cambió.</strong> Estos resultados son del plano analizado antes{analysis?.plant_version ? ` (versión ${analysis.plant_version.slice(0, 8)})` : ''}. Vuelve al paso 1 y pulsa «Guardar y ver en 3D» para recalcular.
+                                  <strong>Resultados pendientes de actualizar.</strong> Revisa el plano, el contexto y tus prioridades. Confirma «Así entendimos tu planta» y vuelve al paso 1 para recalcular.
                               </p>
                           )}
                           <Suspense fallback={<p className="small" style={{ padding: 48 }}>Cargando…</p>}>{view}</Suspense>
@@ -271,7 +364,41 @@ export default function App() {
                 </main>
             </div>
 
-            <EngineerChat open={chat} onClose={() => setChat(false)} context={context} />
+            {/* Abrir y cerrar el panel se anima; cambiar de proyecto lo reemplaza al instante
+                (dos paneles a la vez dejarían botones del proyecto anterior a la vista). */}
+            <AnimatePresence>
+            {contextTopic !== null && (
+                <div key="context-panel" style={{ display: 'contents' }}>
+                <ContextWorkspace
+                    key={library.activeId}
+                    project={project}
+                    projects={library.projects}
+                    activeProjectId={library.activeId}
+                    onCreateProject={createProject}
+                    onSelectProject={selectProject}
+                    onSaveProject={library.save}
+                    onNotify={notify}
+                    onClearContext={clearContext}
+                    plant={draft || plant}
+                    onTextChange={(text) => update({ text, printed: false })}
+                    onContextChange={(context) => update({ context, printed: false })}
+                    onWorkspaceChange={(patch) => update((p) => ({ contextWorkspace: { ...p.contextWorkspace, ...(typeof patch === 'function' ? patch(p.contextWorkspace || {}) : patch) }, printed: false }))}
+                    onProjectChange={update}
+                    onPrioritiesToggle={(prioritiesEnabled) => update({ prioritiesEnabled, printed: false })}
+                    onWeightsChange={(weights) => update({ weights, printed: false })}
+                    summary={summary}
+                    confirmed={confirmed}
+                    onConfirm={() => update({ context2Ok: signature })}
+                    onClose={closeContext}
+                    onGoToPlan={() => { closeContext(); go(0) }}
+                    initialTopic={contextTopic}
+                />
+                </div>
+            )}
+            </AnimatePresence>
+
+            <EngineerChat open={chat && contextTopic === null} onClose={() => setChat(false)} context={stale ? null : context} />
+            <DialogHost />
 
             <AnimatePresence>
                 {toast && (

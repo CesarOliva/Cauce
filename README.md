@@ -16,6 +16,48 @@ Funciona para cualquier rubro (vidrio, carpintería, metalmecánica, costura, al
 
 ---
 
+## Contexto, estudios y operadores conectados
+
+El recorrido maestro añade un intérprete general que delega a especialistas, una ronda de aclaraciones y un consolidador explícito. El maestro conserva entidades, afirmaciones, fuentes y dudas. La construcción usa sus datos aceptados y comprueba cada requisito del plano. Contrato: [CONTRATO-MAESTRO.md](coordinacion/CONTRATO-MAESTRO.md).
+
+Para probar: abre **Ver contexto de la planta**, pega el relato o adjunta documentos, organiza y revisa las propuestas. Confirma los datos y vuelve al paso inicial para construir. Después de editar el plano, usa **Comprobar el plano contra el contexto**; confirma la versión antes de analizar. Los requisitos incumplidos o desconocidos y las dimensiones ilustrativas quedan visibles.
+
+El plano se construye por lotes de cinco entidades o recorridos (`CAUCE_BUILD_BATCH_SIZE`, entre 1 y 20), con comprobación y avance recuperable en SQLite. La pantalla muestra las etapas; si un lote incumple el contexto o se solapa, se detiene y conserva el avance anterior. Volver a construir permite reanudar una interrupción cuando el maestro coincide; cambiar sus datos inicia una construcción nueva. El plano anterior permanece guardado hasta terminar correctamente.
+
+La prioridad general es texto para datos e imágenes para ubicación. Puedes indicar que las imágenes son la referencia principal de este proyecto. En ese caso se requiere interpretación de visión o revisión manual explícita; la aplicación no afirma haber leído una imagen con un modelo sin visión.
+
+El ensayo con el modelo real se ejecuta desde la raíz:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 backend/evaluate_master.py
+```
+
+Registra el resultado y las trazas en `.cauce-data/master-evaluation.json`. Si Ollama no está listo, registra `not_run`; no utiliza un modelo simulado para sustituir esa prueba. Las anotaciones visuales de `pruebas/contexto-transformadores.expected.json` son referencias humanas de evaluación y no se envían al modelo como respuestas esperadas.
+
+`CAUCE_AGENT_CHUNK_CHARS` limita cada bloque de lectura de contexto/estudios (1000 caracteres por defecto, entre 256 y 4000). Las dudas y entregas internas se dividen en ciclos, con memoria auxiliar limitada y reserva de respuesta; no se reenvía todo el expediente en cada consulta. La estimación de tokens y los ciclos quedan en las trazas.
+
+`CAUCE_CONTEXT_CONCURRENCY` permite 1–4 consultas simultáneas de especialistas (2 por defecto). `CAUCE_OLLAMA_CONTEXT` fija la ventana solicitada al servidor (8192 por defecto), enviada como `options.num_ctx` según la [documentación de Ollama](https://github.com/ollama/ollama/blob/main/docs/faq.mdx). El ajuste de rendimiento y la fidelidad con el caso real quedan pendientes del ensayo con un proveedor activo.
+
+La rama de continuación `feature/data1` reúne el expediente local persistente en SQLite, con confirmación por lotes, documentos originales, trabajos de interpretación por bloques, estudios de más de cien actividades, base de operadores y entregables estructurados, junto con las mejoras de recinto, editor y presentación de Eduardo. Contrato, integración y próximos pasos: [CONTRATO-DATA.md](coordinacion/CONTRATO-DATA.md) y [PLAN-DATA.md](PLAN-DATA.md).
+
+Desde la raíz, con las dependencias de `backend/requirements-dev.txt` instaladas en `.venv`:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000
+```
+
+En otra terminal: `cd frontend` y `npm run dev -- --host 127.0.0.1`. Abrir **Ver contexto de la planta**. El estado se guarda en el navegador; **Guardar copia del proyecto** persiste el expediente en el backend y **Exportar con archivos** permite trasladarlo. `CAUCE_DATA_DIR` cambia la carpeta de SQLite (por defecto `.cauce-data`, excluida de Git).
+
+La interpretación utiliza el proveedor existente del rol contexto: `OLLAMA_HOST`, `CAUCE_CONTEXT_PROVIDER` y `CAUCE_CONTEXT_MODEL`. Si el modelo no está disponible, el servicio lo explica y conserva captura manual y documentos. Las pruebas no necesitan Ollama: usan proveedores simulados. No se ha equiparado esa prueba con la calidad de un modelo real.
+
+En Windows también se puede usar `powershell -ExecutionPolicy Bypass -File .\iniciar.ps1`. Reutiliza `.venv` de la raíz o `backend/.venv`, inicia el backend oculto y deja el frontend en la terminal. El modelo se configura después; solo se descarga desde este script si se añade `-DescargarModelo`.
+
+Los porcentajes de operadores importados conservan su escala y procedencia; la eficiencia calculada requiere definir sus observaciones. Las duraciones desconocidas quedan sin dato. Un promedio de muestras se calcula en código y no se llama tiempo estándar. Los formatos sin extracción real y los PDFs escaneados siguen pendientes de lectura.
+
+Pruebas: `.venv\Scripts\python.exe -m pytest backend/tests -q`, y en frontend `npm test` / `npm run build`. La integración de navegador se comprueba con `backend/tests/serve_data_smoke.py` y `frontend/tests/data-smoke-server.mjs` en procesos separados, y después `node tests/data-backend.browser.mjs`; ese servidor de pruebas usa un expediente temporal y proveedor simulado, separado del servidor normal.
+
+---
+
 ## Índice
 
 1. [Idea y origen](#1-idea-y-origen)
@@ -137,7 +179,7 @@ Abre <http://localhost:5173>. Vite redirige todas las llamadas a `/api` hacia `h
 
 ### Dónde se guardan los datos
 
-No hay base de datos. Todo el proyecto (historia, plano, análisis, rediseño, misiones) se guarda en el **localStorage del navegador** con la clave `cauce-proyecto-v2`. Borrar los datos del sitio o usar otra computadora empieza de cero. La foto aérea **no** se guarda: vive solo mientras la pestaña está abierta.
+No hay base de datos de proyectos en el servidor. **Mis proyectos** guarda varios espacios independientes en el navegador con la clave `cauce-proyectos-v1`; el proyecto activo se refleja en `cauce-proyecto-v3` por compatibilidad. Los documentos originales se guardan en IndexedDB. Borrar los datos del sitio o usar otra computadora no traslada estos proyectos ni sus adjuntos. La foto aérea **no** se guarda: vive solo mientras la pestaña está abierta.
 
 ---
 
@@ -157,7 +199,7 @@ Variables generales:
 |---|---|---|
 | `CAUCE_MODEL` | `llama3.1:8b` | Cambia el modelo de los tres papeles a la vez |
 | `CAUCE_PROVIDER` | `ollama` | Cambia el proveedor de los tres papeles a la vez |
-| `OLLAMA_HOST` | `http://localhost:11434` | Dirección del servidor de Ollama |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Dirección del servidor de Ollama |
 
 Además, cada agente del contrato v3 tiene su propio proveedor y modelo (`cauce/providers/__init__.py`), con su prompt en `backend/cauce/agents/<rol>.md`:
 
@@ -359,6 +401,7 @@ Crea la app FastAPI, habilita CORS abierto (es una app local) e instancia las do
 | GET | `/api/catalog` | — | Tipos de estación, tipos de zona, supuestos, listas de áreas sucias y limpias | Editor y supuestos |
 | GET | `/api/example` | — | La planta de ejemplo (taller de vidrio) | Botón "Cargar el taller de vidrio" |
 | POST | `/api/story` | `{ text }` | `plant`, `assumptions`, `source` (ia/reglas), `notes`, `ai_assumptions`, `rules`, `error`, `extracted` | Leer la historia |
+| POST | `/api/context/organize` | `{ text }` (1–8000 caracteres) | `proposals`, `master` (`draft`), `errors` por especialista | Diez especialistas por tema y un consolidador preparan contexto revisable; requiere proveedor listo |
 | POST | `/api/routes` | `{ plant, positions }` | `legs`, `piece_m`, `blocked_legs`, `avoid_hits` | Recorridos en vivo del editor (sin supuestos) |
 | POST | `/api/evaluate` | `{ plant, positions, rebalance }` | Todas las métricas + `ops_moves` | Métricas de "Tu rediseño" |
 | GET | `/api/capabilities` | — | `{ schema_version: 3, features, vision }` | El frontend muestra solo lo que el backend anuncia |
@@ -370,7 +413,7 @@ Crea la app FastAPI, habilita CORS abierto (es una app local) e instancia las do
 | POST | `/api/simulate` | `{ plant, alternative?, replicas?, seed?, positions? }` | `{ seed, replicas, kpis, bottleneck, notes }` con P10, mediana y P90 | Simulación con variabilidad |
 | POST | `/api/references/read` | `{ image, note }` | Descripción de la imagen, o 422 si el proveedor no tiene visión | Referencias con imagen |
 
-`features` hoy: `report_validation`, `segmented_context`, `count`, `locked`, `plan_ops`, `weights`, `flows`, `conveyors`, `simulate`. El contrato completo está en [coordinacion/CONTRATO-v3.md](coordinacion/CONTRATO-v3.md).
+`features` hoy: `report_validation`, `segmented_context`, `count`, `locked`, `plan_ops`, `weights`, `flows`, `conveyors`, `simulate`, `context_agents`. El contrato completo está en [coordinacion/CONTRATO-v3.md](coordinacion/CONTRATO-v3.md). El JSON maestro de `/api/context/organize` es un borrador que no modifica el plano; cada propuesta requiere revisión. Si la IA de contexto no está lista, la interfaz usa la clasificación local por palabras clave e informa esa limitación.
 
 **Validación del informe (`cauce/validate.py`).** Cada oración del informe y del chat se revisa antes de mostrarse: si cita una cifra que no está en `facts()` (con tolerancia de redondeo) o elogia una alternativa que el motor muestra peor que hoy, se descarta y queda en `validation.discarded`.
 
@@ -561,9 +604,10 @@ No hay librería de gráficos ni de estado: los gráficos son SVG hechos a mano 
 
 ### 9.3 `project.js`: el estado guardado
 
-Un solo objeto con: `text` (historia), `info` (lo que entendió la lectura), `draft` (planta en edición), `plant` (planta guardada), `analysis`, `redesign` (`choice`, `custom`, `metrics`), `printed`, `game` (misiones y cuáles se cumplieron) y `maxStep`.
+Cada proyecto tiene su propio objeto con `text` (historia), `info` (lo que entendió la lectura), `draft` (planta en edición), `plant` (planta guardada), `analysis`, `redesign`, `context`, `contextWorkspace`, `printed`, `game` y `maxStep`.
 
-- `useProject()` lo carga de localStorage y lo guarda 300 ms después de cada cambio (si no hay espacio o es modo privado, sigue sin guardar).
+- `useProject()` administra la colección local, migra el proyecto anterior sin borrarlo y mantiene aisladas las respuestas asíncronas de cada proyecto. Si el almacenamiento está bloqueado o lleno, se sigue trabajando en memoria sin persistencia.
+- En **Mis proyectos** se puede crear o abrir un proyecto y borrar solo el contexto del activo. Esta última operación conserva su plano y borra también los originales de sus adjuntos en IndexedDB.
 - `blankPlant()` crea una bodega vacía de 30 × 16 m con dos portones.
 - `customOf()` y `chosen()` resuelven qué rediseño está elegido (una alternativa o "Tu rediseño"), y mantienen compatibilidad con proyectos viejos que guardaban solo posiciones.
 
@@ -904,7 +948,7 @@ npm run build
 1. **Velocidad de la IA local**: `llama3.1:8b` nombra mejor las cosas que el modelo de 3B, pero sin tarjeta de video tarda unos 2 minutos por historia. Un modelo en la nube lo haría en segundos; basta cambiar `CAUCE_EXTRACT_MODEL` y el proveedor.
 2. **Foto aérea manual**: se sube a mano para comparar; no se genera ni se lee con visión para medir máquinas.
 3. **Tamaño del bundle**: ~1 MB porque three.js no está dividido en partes que carguen bajo demanda.
-4. **Sin persistencia en servidor**: el proyecto vive en un navegador; no hay cuentas ni varias plantas por usuario.
+4. **Sin persistencia en servidor**: pueden coexistir varias plantas en un navegador, pero aún no hay cuentas ni sincronización entre computadoras.
 5. **Paredes y portones**: los portones solo van sobre el muro de la calle; las alternativas automáticas no proponen obra (eso se hace en "Tu rediseño").
 6. **Supuestos**: con datos supuestos, los resultados son un orden de magnitud. Con tiempos medidos el método es el mismo y los números se vuelven confiables.
 
