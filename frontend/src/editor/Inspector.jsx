@@ -165,7 +165,7 @@ function SolidHole({ hole, onChange }) {
   )
 }
 
-export default function Inspector({ plant, positions, sel, setSel, commit, rotate, remove, catalog, full, live, duplicate, ops, outside = 0, tool, parts = [], comp, shape, lock, group, selectFamily }) {
+export default function Inspector({ plant, positions, sel, setSel, commit, rotate, remove, catalog, full, live, duplicate, ops, outside = 0, tool, parts = [], comp, shape, lock, group }) {
   const caps = useCaps()
   const names = Object.fromEntries(plant.stations.map((s) => [s.id, s.name]))
   const setStation = (id, patch) => commit({ ...plant, stations: plant.stations.map((s) => (s.id === id ? { ...s, ...patch } : s)) }, positions)
@@ -343,16 +343,6 @@ export default function Inspector({ plant, positions, sel, setSel, commit, rotat
             {group.isCollapsed(s) ? `Ver las ${countOf(s)} máquinas` : `Ver como un bloque ×${countOf(s)}`}
           </button>
         )}
-        {s.family && (
-          <p className="small">
-            Rama {s.lane} de {plant.stations.filter((q) => q.family === s.family).length} de <b>{s.family_name || 'su familia'}</b>.{' '}
-            {selectFamily && (
-              <button type="button" className="link-btn small" onClick={() => selectFamily(s.family)}>
-                Seleccionar todas
-              </button>
-            )}
-          </p>
-        )}
         <LockBox item={s} lock={lock} full={full} />
         {full && has(caps, 'count') && !s.locked && <Units s={s} setStation={setStation} />}
         {full && (
@@ -410,10 +400,6 @@ export default function Inspector({ plant, positions, sel, setSel, commit, rotat
             <label className="field field--check">
               <input type="checkbox" checked={!!r.is_return} onChange={(e) => setRoute(r.id, { is_return: e.target.checked })} />
               <span>Es un retorno (regresa a una estación anterior: retrabajo, otra prueba)</span>
-            </label>
-            <label className="field field--check">
-              <input type="checkbox" checked={!!r.component} onChange={(e) => setRoute(r.id, { component: e.target.checked })} />
-              <span>Es un componente que se junta (ensamble: el núcleo que entra al armado no suma piezas)</span>
             </label>
           </>
         )}
@@ -565,9 +551,6 @@ export default function Inspector({ plant, positions, sel, setSel, commit, rotat
       <aside className="inspector">
         <span className="inspector-kicker">Portón</span>
         <Field label="Nombre" value={g.label} onCommit={(v) => setGate(g.id, { label: v })} />
-<<<<<<< HEAD
-        {!g.locked && <p className="small">Arrástralo por cualquier muro exterior. En 3D la calle aparece frente a cada lado con portón.</p>}
-=======
         <label className="field">
           <span>Uso</span>
           <select value={g.use || 'mixto'} onChange={(e) => setGate(g.id, { use: e.target.value })}>
@@ -579,7 +562,6 @@ export default function Inspector({ plant, positions, sel, setSel, commit, rotat
         <Field label="Ancho" type="number" step="0.1" min={1} value={g.w ?? 4.4} suffix="m" onCommit={(v) => setGate(g.id, { w: Math.max(1, v) })} />
         <Field label="Alto" type="number" step="0.1" min={1} value={g.h ?? 4.5} suffix="m" onCommit={(v) => setGate(g.id, { h: Math.max(1, v) })} />
         <p className="small">Arrástralo por cualquier muro exterior. En 3D la calle aparece frente a cada lado con portón.</p>
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
         <div className="row">
           <button type="button" className="btn btn--small" aria-pressed={plant.receive_gate === g.id} onClick={() => commit({ ...plant, receive_gate: g.id }, positions)}>
             {plant.receive_gate === g.id ? 'Entra por aquí' : 'Que entre por aquí'}
@@ -588,8 +570,7 @@ export default function Inspector({ plant, positions, sel, setSel, commit, rotat
             {plant.dispatch_gate === g.id ? 'Sale por aquí' : 'Que salga por aquí'}
           </button>
         </div>
-        <div className="row">{plant.gates.length > 1 && !g.locked && del}</div>
-        <LockBox item={g} lock={lock} full={full} />
+        <div className="row">{plant.gates.length > 1 && del}</div>
       </aside>
     )
   }

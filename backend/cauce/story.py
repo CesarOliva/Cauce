@@ -17,11 +17,7 @@ import re
 import unicodedata
 
 from .catalog import ASSUMPTIONS, DEFAULT_PARAMS, KIND, ZONE
-<<<<<<< HEAD
-from . import branches, textplace, units
-=======
 from . import site, spec, units
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
 from .agents import prompt
 from .agents import apply_building, apply_walls, apply_zones, fit_zones, place_with_targets, station_targets
 from .engine import gate_pt
@@ -114,23 +110,10 @@ def words_to_digits(t: str) -> str:
 
 
 WORD_START = r"(?<![a-z])"
-# La palabra clave puede ser una raíz ("lij" de lijadora): primero se salta el resto de la palabra.
 DIMENSIONS_AFTER_MENTION = re.compile(
-<<<<<<< HEAD
-    r"^[a-z]*[\s(,:-]*(?:(?:con\s+dimensiones?\s+de|dimensiones?\s+de|area\s+de|de|mide|es|tiene|con)\s*)?"
-    r"(?P<w>\d+(?:[.,]\d+)?)\s*(?:m(?:etros?)?\s*)?(?:x|×|por)\s*"
-    r"(?P<d>\d+(?:[.,]\d+)?)\s*(?:m(?:etros?)?)?"
-)
-FACILITY_DIMENSIONS = re.compile(
-    r"^\s*(?P<context>(?:(?:[a-z0-9]+\s+){0,6}?)"
-    r"(?:que\s+)?(?:mide|tiene|es|de|con\s+dimensiones?\s+de)\s*)"
-    r"(?P<w>\d+(?:[.,]\d+)?)\s*(?:m(?:etros?)?\s*)?(?:x|×|por)\s*"
-    r"(?P<d>\d+(?:[.,]\d+)?)\s*(?:m(?:etros?)?)?"
-=======
     r"^[a-z]*(?:\s+(?:de|del)\s+(?!\d)[a-z]+)?[\s(,:-]*(?:(?:con\s+dimensiones?\s+de|dimensiones?\s+de|area\s+de|de|mide|es|tiene|con|que\s+mide)\s*)?"
     r"(?P<w>\d+(?:[.,]\d+)?)\s*(?:(?:cm|mm|m(?:etros?)?)\s*)?(?:x|×|por)\s*"
     r"(?P<d>\d+(?:[.,]\d+)?)\s*(?P<u>cm|mm|centimetros?|milimetros?|m(?:etros?)?)?"
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
 )
 
 
@@ -151,27 +134,12 @@ def _zone_instances(text: str, zone_id: str) -> list[tuple[str, float, float]]:
         return []
 
     _, keyword, _ = min(mentions, key=lambda item: (item[0], -len(item[1])))
-    instances, explicit = [], []
+    instances = []
     for mention in re.finditer(WORD_START + re.escape(keyword) + r"(?:s|es)?", text):
         match = DIMENSIONS_AFTER_MENTION.match(text[mention.end():mention.end() + 64])
-<<<<<<< HEAD
-        dimensions = None
-        if match:
-            width = float(match.group("w").replace(",", "."))
-            depth = float(match.group("d").replace(",", "."))
-            if width > 0 and depth > 0:
-                dimensions = (width, depth)
-        if instances and not _another(text, mention.start()):
-            if dimensions and not explicit[-1]:
-                instances[-1] = (ZONE[zone_id]["name"], *dimensions)
-                explicit[-1] = True
-            continue
-=======
         dimensions = _dims_of(match) if match else None
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
         width, depth = dimensions or (ZONE[zone_id]["w"], ZONE[zone_id]["d"])
         instances.append((ZONE[zone_id]["name"], width, depth))
-        explicit.append(dimensions is not None)
     return instances
 
 
@@ -185,28 +153,8 @@ def _station_instances(text: str, kind: str) -> list[tuple[int, tuple[float, flo
     instances = []
     for mention in sorted(mentions.values(), key=lambda item: item.start()):
         match = DIMENSIONS_AFTER_MENTION.match(text[mention.end():mention.end() + 64])
-<<<<<<< HEAD
-        dimensions = None
-        if match:
-            width = float(match.group("w").replace(",", "."))
-            depth = float(match.group("d").replace(",", "."))
-            if width > 0 and depth > 0:
-                dimensions = (width, depth)
-        # Volver a nombrarla ("cada armado pasa a su soldadura", "el horno mide 6x3") no es
-        # otra máquina: solo "otra sierra". Si la mención trae medidas, son de la anterior.
-        if instances and not _another(text, mention.start()):
-            if dimensions and instances[-1][1] is None:
-                instances[-1] = (instances[-1][0], dimensions)
-            continue
-        instances.append((mention.start(), dimensions))
-=======
         instances.append((mention.start(), _dims_of(match) if match else None))
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
     return instances
-
-
-def _another(text: str, pos: int) -> bool:
-    return bool(re.search(r"(?<![a-z])otr[oa]s?\s+(?:[a-z]+\s+)?$", text[max(0, pos - 24):pos]))
 
 
 def by_rules(text: str) -> dict:
@@ -327,56 +275,6 @@ def _station(i, name, kind, t=None, ops=None, dimensions=None):
     }
 
 
-<<<<<<< HEAD
-def _reaches(routes, a, b):
-    """¿Se llega de a a b siguiendo las rutas?"""
-    seen, todo = set(), [a]
-    while todo:
-        k = todo.pop()
-        if k == b:
-            return True
-        if k not in seen:
-            seen.add(k)
-            todo += [r["to"] for r in routes if r["from"] == k]
-    return False
-
-
-def _topo(stations, routes):
-    """Estaciones en el orden del flujo (Kahn); a la par, en el orden de la historia.
-    La recepción va primero y el despacho al final."""
-    idx = {s["id"]: i for i, s in enumerate(stations)}
-    inc = {s["id"]: 0 for s in stations}
-    for r in routes:
-        inc[r["to"]] += 1
-    key = lambda s: (s["kind"] != "recepcion", s["kind"] == "despacho", idx[s["id"]])
-    ready = sorted((s for s in stations if inc[s["id"]] == 0), key=key)
-    by_id = {s["id"]: s for s in stations}
-    out = []
-    while ready:
-        s = ready.pop(0)
-        out.append(s)
-        for r in routes:
-            if r["from"] == s["id"]:
-                inc[r["to"]] -= 1
-                if inc[r["to"]] == 0:
-                    ready.append(by_id[r["to"]])
-        ready.sort(key=key)
-    return out + [s for s in stations if s not in out]
-
-
-def _bypass_belt_station(stations, routes):
-    """La banda que la historia menciona será una banda común, no una estación: sus rutas se puentean."""
-    belt = {s["id"] for s in stations if s["kind"] == "banda"}
-    if not belt:
-        return stations, routes
-    keep = [r for r in routes if r["from"] not in belt and r["to"] not in belt]
-    for b in belt:
-        for a in (r for r in routes if r["to"] == b):
-            for c in (r for r in routes if r["from"] == b):
-                if a["from"] != c["to"] and not any(r["from"] == a["from"] and r["to"] == c["to"] for r in keep):
-                    keep.append({"from": a["from"], "to": c["to"], "frac": min(float(a.get("frac", 1) or 0), float(c.get("frac", 1) or 0))})
-    return [s for s in stations if s["id"] not in belt], [{**r, "id": f"r{i + 1}"} for i, r in enumerate(keep)]
-=======
 WEAK = {"recepcion": r"recep|materias? primas?|almacen de entrada", "despacho": r"despach|embarque|area de salida", "mesa": r"mesa de trabajo|banco de trabajo"}
 PROBLEM_WORDS = r"problem|falla|retras|demora|desperdic|desorden|cuello de botella|se acumul|amontona|cruce|se pierde|perdemos|tarda demasiado|queja|retrabaj|defect|merma|rechaz|paro|cuesta trabajo"
 RETURN_WORDS = r"regres|vuelve|devuelv|retrabaj|reproces|repite|se rehace|otra vez"
@@ -418,7 +316,6 @@ def _fit_issues(plant):
         names = ", ".join(sorted(s["name"] for s in plant["stations"] if s["id"] in bad))
         out.append(f"No hubo lugar libre para {names}: quedaron encimadas; conviene moverlas o agrandar el recinto.")
     return out
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
 
 
 def place_zones_default(plant, zone_instances):
@@ -487,11 +384,7 @@ def build_plant(text: str, ai: dict | None, spatial: dict | None = None) -> dict
         if len(found) >= 3 and not re.search(WORD_START + max(normalize(KIND[kid]["name"]).split(), key=len)[:5], t):
             continue
         pos = _where(KIND[kid]["name"], kid, t)
-<<<<<<< HEAD
-        found.append((pos if pos is not None else len(t), KIND[kid]["name"], kid, None, None))
-=======
         found.append((pos if pos is not None else len(t), KIND[kid]["name"], kid, None, None, None))
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
     # Lo que entra va primero y lo que sale al final; lo demás en el orden en que se cuenta.
     found.sort(key=lambda f: (f[2] != "recepcion", f[2] == "despacho", f[0]))
     station_entries = []
@@ -504,15 +397,8 @@ def build_plant(text: str, ai: dict | None, spatial: dict | None = None) -> dict
         if not entries and not mentions:
             continue
 
-<<<<<<< HEAD
-        # Sin estación aceptada de este tipo, las menciones sueltas no crean una (la IA o las
-        # reglas ya la cubrieron con otro nombre, como "sierras de corte" en Corte).
-        if not entries:
-            continue
-=======
         # Repetir una palabra no crea otra máquina: solo cuentan las menciones con medidas propias.
         mentions = [m for m in mentions if m[1]] or mentions[:1]
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
         count = max(len(entries), len(mentions))
         for i in range(count):
             ai_dims = None
@@ -539,14 +425,7 @@ def build_plant(text: str, ai: dict | None, spatial: dict | None = None) -> dict
         if kind_counts[kind] > 1 and name == KIND[kind]["name"]:
             name = f"{name} {kind_indices[kind]}"
         stations.append(_station(len(stations), name, kind, minutes, operators, dimensions))
-    # Máquinas iguales en paralelo (H2): solo si la cifra aparece en la historia. Sin cifra de
-    # la IA, la que la historia pone justo antes del nombre ("10 bobinadoras").
-    product = set(_stems(str(ai.get("producto") or "")))
-    for st_ in stations:
-        if normalize(st_["name"]) not in qty and st_["kind"] not in ("recepcion", "despacho"):
-            q = textplace.quantity(t, [w for w in _stems(st_["name"]) + KIND[st_["kind"]]["keywords"] if w not in product])
-            if q:
-                qty[normalize(st_["name"])] = q
+    # Máquinas iguales en paralelo (H2): solo si la cifra aparece en la historia.
     for st_ in stations:
         q = qty.get(normalize(st_["name"]))
         if q and re.search(rf"\b{q}\b", t):
@@ -567,29 +446,6 @@ def build_plant(text: str, ai: dict | None, spatial: dict | None = None) -> dict
         notes = [f"Estaciones tomadas de la lista del texto ({len(listed)}), con sus medidas exactas."]
 
     # --- Flujo: el de la IA si es coherente; si no, en el orden de la historia ---
-<<<<<<< HEAD
-    routes = []
-    for x in ai.get("flujo", []) or []:
-        if not isinstance(x, dict):
-            continue
-        a, b = _match(str(x.get("de", "")), stations), _match(str(x.get("a", "")), stations)
-        # Una ruta que cierra un ciclo casi siempre es un error de lectura; tampoco se entra a la
-        # recepción ni se sale del despacho.
-        if not a or not b or a == b or any(r["from"] == a and r["to"] == b for r in routes):
-            continue
-        kinds = {s["id"]: s["kind"] for s in stations}
-        if kinds[b] == "recepcion" or kinds[a] == "despacho" or _reaches(routes, b, a):
-            continue
-        pct = x.get("porcentaje")
-        frac = pct / 100 if isinstance(pct, (int, float)) and 0 < pct <= 100 else 1.0
-        routes.append({"id": f"r{len(routes) + 1}", "from": a, "to": b, "frac": round(frac, 2)})
-    # El orden de las estaciones sigue el flujo; lo que el flujo no ordena, el de la historia.
-    stations = _topo(stations, routes)
-    # Lo que quedó sin conectar (lo que agregaron las reglas): la recepción alimenta los inicios
-    # del flujo, los finales van al despacho y lo demás sigue a la anterior en el orden.
-    connected = {r["from"] for r in routes} | {r["to"] for r in routes}
-    ins, outs = {r["to"] for r in routes}, {r["from"] for r in routes}
-=======
     # Grafo del proceso: una estación puede alimentar a varias y recibir de varias (ramas y uniones).
     # Primero el flujo escrito en el texto ("A alimenta a B y a C"); si no lo hay, el de la IA.
     routes = spec.routes(text, stations) if listed else []
@@ -640,40 +496,18 @@ def build_plant(text: str, ai: dict | None, spatial: dict | None = None) -> dict
     # El flujo principal (sin retornos) es el que ordena; un retorno no conecta una estación.
     main = [r for r in routes if not r.get("is_return")]
     connected = {r["from"] for r in main} | {r["to"] for r in main}
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
     prev = None
     guessed = []
     for s in stations:
-<<<<<<< HEAD
-        sid = s["id"]
-        if sid not in connected:
-            if s["kind"] == "recepcion" and routes:
-                links = [(sid, k) for k in outs - ins] or ([(sid, stations[1]["id"])] if len(stations) > 1 else [])
-            elif s["kind"] == "despacho" and routes:
-                links = [(k, sid) for k in ins - outs]
-            else:
-                links = [(prev, sid)] if prev else []
-            for a, b in links:
-                routes.append({"id": f"r{len(routes) + 1}", "from": a, "to": b, "frac": 1.0})
-        prev = sid
-=======
         if s["id"] not in connected and prev and routes:
             routes.append({"id": f"r{len(routes) + 1}", "from": prev, "to": s["id"], "frac": 1.0})
             guessed.append(s["name"])
         prev = s["id"]
     if guessed:
         notes.append("Sin flujo explícito para " + ", ".join(guessed) + ": se conectó en el orden de la descripción.")
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
     if not routes:
         for a, b in zip(stations, stations[1:]):
             routes.append({"id": f"r{len(routes) + 1}", "from": a["id"], "to": b["id"], "frac": 1.0})
-
-    # --- Ramas: cada máquina de una familia con su propia ruta (branches.py) ---
-    belt_words = re.search(WORD_START + r"(?:banda|transportador)", t)
-    if belt_words and any(units.count(s) > 1 for s in stations):
-        stations, routes = _bypass_belt_station(stations, routes)
-    stations, routes, branch_notes = branches.expand(stations, routes)
-    notes += branch_notes
 
     # --- Zonas: solo las que la historia menciona ---
     zkinds = [(zid, ZONE[zid]["name"]) for zid in rules["zones"]]
@@ -755,13 +589,6 @@ def build_plant(text: str, ai: dict | None, spatial: dict | None = None) -> dict
     if spatial:
         geometry = (plant["size"], plant.get("outline"))
         apply_building(plant, t, (spatial.get("edificio") or {}).get("data"), spatial_notes)
-<<<<<<< HEAD
-    plant["zones"] = place_zones_default(plant, zone_instances)
-    # Lo que la historia dice con palabras de cada elemento: tamaño, lugar y fijos (textplace.py).
-    said = textplace.read(plant, t)
-    spatial_notes += textplace.apply_sizes(plant, said)
-    spatial_notes += textplace.apply_gates(plant, said)
-=======
         if explicit:
             plant["size"], plant["outline"] = geometry
             if plant["outline"] is None:
@@ -779,29 +606,18 @@ def build_plant(text: str, ai: dict | None, spatial: dict | None = None) -> dict
         for g in plant["gates"]:
             g["x"], g["z"] = (round(v, 2) for v in gate_pt(plant, g["id"], 0.0))
     plant["zones"] = place_zones_default(plant, zone_instances) + site.aisles(t, plant["size"]["w"], plant["size"]["d"], plant.get("_main"))
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
     if spatial:
         apply_zones(plant, t, (spatial.get("zonas") or {}).get("data"), spatial_notes)
-    spatial_notes += textplace.apply_zones(plant, said)
-    if spatial or said:
         fit_zones(plant)
     plant["layout"] = initial_layout(plant)
-    targets, near = station_targets(plant, t, (spatial.get("acomodo") or {}).get("data")) if spatial else ({}, {})
-    told = textplace.station_targets(plant, said)
-    targets.update(told)
-    if targets or near:
-        plant["layout"] = place_with_targets(plant, targets, near)
-        textplace.exact(plant, told)
-        where = dict.fromkeys(s.get("family_name") or s["name"] for s in plant["stations"] if s["id"] in targets or s["id"] in near)
-        spatial_notes.append("Ubicación tomada de la descripción: " + ", ".join(where) + ".")
     if spatial:
+        targets, near = station_targets(plant, t, (spatial.get("acomodo") or {}).get("data"))
+        if targets or near:
+            plant["layout"] = place_with_targets(plant, targets, near)
+            where = [s["name"] for s in plant["stations"] if s["id"] in targets or s["id"] in near]
+            spatial_notes.append("Ubicación tomada de la descripción: " + ", ".join(where) + ".")
         apply_walls(plant, t, (spatial.get("paredes") or {}).get("data"), spatial_notes)
         used = [k for k, v in spatial.items() if v.get("data") is not None]
-<<<<<<< HEAD
-    spatial_notes += textplace.apply_locks(plant, said)
-    if belt_words:
-        spatial_notes += branches.convergence_belts(plant, plant["layout"])
-=======
     outs, ins = {}, {}
     for r in plant["routes"]:
         outs[r["from"]] = outs.get(r["from"], 0) + 1
@@ -824,7 +640,6 @@ def build_plant(text: str, ai: dict | None, spatial: dict | None = None) -> dict
         plant["layout"] = spec.flow_layout(plant, None, plant.get("_main"))
     plant.pop("_main", None)
     issues += site.check_gates(plant) + _fit_issues(plant)
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
     # El acomodo inicial sigue el flujo; se guarda en ese orden.
     order = {sid: i for i, sid in enumerate(flow_order(plant))}
     plant["stations"].sort(key=lambda s: order.get(s["id"], 0))

@@ -321,11 +321,11 @@ export default function PlanEditor({ plant, positions, onChange, catalog, mode =
     const { layout, ...rest } = out.plant
     commit('layout' in plant ? { ...rest, layout: plant.layout } : rest, layout)
   }
-  const lockedItem = (type, id) => (type === 'station' ? st[id] : type === 'zone' ? plant.zones.find((q) => q.id === id) : type === 'conveyor' ? conveyors.find((q) => q.id === id) : type === 'gate' ? plant.gates.find((q) => q.id === id) : null)
+  const lockedItem = (type, id) => (type === 'station' ? st[id] : type === 'zone' ? plant.zones.find((q) => q.id === id) : type === 'conveyor' ? conveyors.find((q) => q.id === id) : null)
   const blockedByLock = (type, id) => {
     const it = lockedItem(type, id)
     if (!it?.locked) return false
-    setNotice(`«${it.name || it.label}» está fijo${it.lock_reason ? `: ${it.lock_reason}` : ''}. Libéralo en el panel para moverlo.`)
+    setNotice(`«${it.name}» está fijo${it.lock_reason ? `: ${it.lock_reason}` : ''}. Libéralo en el panel para moverlo.`)
     return true
   }
   /* Un lote de operaciones = un paso de deshacer; lo rechazado (por ejemplo, lo fijo) se avisa. */
@@ -672,7 +672,6 @@ export default function PlanEditor({ plant, positions, onChange, catalog, mode =
     if (!full || tool !== 'select') return
     e.stopPropagation()
     setSel({ type: 'gate', id: gt.id })
-    if (gt.locked) return blockedByLock('gate', gt.id)
     startDrag(e, { type: 'gate', id: gt.id })
   }
   const onDownConveyor = (e, c) => {
@@ -1423,16 +1422,10 @@ export default function PlanEditor({ plant, positions, onChange, catalog, mode =
               const gi = gateInfo(plant, gt)
               const lift = 1.7 + Math.abs(gi.n[0]) * 2.2
               return (
-<<<<<<< HEAD
-                <g key={gt.id} onPointerDown={(e) => onDownGate(e, gt)} style={{ cursor: full && tool === 'select' && !gt.locked ? 'move' : undefined }}>
-                  <rect x={-GATE_HALF} y={-0.35} width={GATE_HALF * 2} height={1} transform={`translate(${gi.x} ${gi.z}) rotate(${gi.deg})`} fill={role ? '#000' : '#fff'} stroke="#000" strokeWidth={on ? 0.3 : 0.15} strokeDasharray={gt.locked ? '0.4 0.25' : undefined} />
-=======
                 <g key={gt.id} onPointerDown={(e) => onDownGate(e, gt)} style={{ cursor: full && tool === 'select' ? 'move' : undefined }}>
                   <rect x={-gi.half} y={-0.35} width={gi.half * 2} height={1} transform={`translate(${gi.x} ${gi.z}) rotate(${gi.deg})`} fill={role ? '#000' : '#fff'} stroke="#000" strokeWidth={on ? 0.3 : 0.15} />
->>>>>>> 4f404dfa9ddfea6e9ca8e9d0beb56bad330296ae
                   <text x={gi.x + gi.n[0] * lift} y={gi.z + gi.n[1] * lift + 0.3} textAnchor="middle" fontSize="0.9" fontWeight={role ? 800 : 500} fill="#000" pointerEvents="none">
                     {gt.id} {role}
-                    {gt.locked ? ' 🔒' : ''}
                   </text>
                 </g>
               )
@@ -1617,10 +1610,6 @@ export default function PlanEditor({ plant, positions, onChange, catalog, mode =
           shape={{ arm, setArm, addHole, setHole, startPen, pen, cancel: cancelShape }}
           lock={lock}
           group={{ isCollapsed, toggle: toggleCollapsed }}
-          selectFamily={(fam) => {
-            setMulti(plant.stations.filter((q) => q.family === fam).map((q) => q.id))
-            setSel(null)
-          }}
         />
         )}
       </div>
